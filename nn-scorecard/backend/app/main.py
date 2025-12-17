@@ -35,12 +35,21 @@ app.include_router(scoring.router, prefix="/api/scoring", tags=["scoring"])
 # Debug: Print all routes on startup
 @app.on_event("startup")
 async def startup_event():
+    print("\n" + "="*60)
+    print("🚀 Neural Network Scorecard API Starting...")
+    print("="*60)
+    print(f"📍 CORS Origins: {settings.CORS_ORIGINS}")
+    print(f"📍 Backend URL: http://0.0.0.0:8000")
+    print(f"📍 API Docs: http://localhost:8000/docs")
     print("\n=== REGISTERED ROUTES ===")
     for route in app.routes:
         if hasattr(route, 'methods') and hasattr(route, 'path'):
             methods = ', '.join(sorted(route.methods))
             print(f"  {methods:20} {route.path}")
-    print("=========================\n")
+    print("=========================")
+    print("✅ Backend is ready! Make sure frontend is configured to use:")
+    print(f"   VITE_API_URL=http://localhost:8000")
+    print("="*60 + "\n")
 
 
 @app.get("/")

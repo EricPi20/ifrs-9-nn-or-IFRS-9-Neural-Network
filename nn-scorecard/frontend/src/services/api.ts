@@ -53,14 +53,31 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(`${API_BASE_URL}/api/upload/`, {
-      method: 'POST',
-      body: formData,
-    });
+    console.log('📤 Uploading file to:', `${API_BASE_URL}/api/upload/`);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
-      throw new Error(error.detail || 'Upload failed');
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/upload/`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+        const errorMessage = error.detail || `Upload failed with status ${response.status}`;
+        console.error('❌ Upload error:', errorMessage);
+        throw new Error(errorMessage);
+      }
+    } catch (err) {
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        console.error('❌ Network error - Backend not reachable:', API_BASE_URL);
+        throw new Error(
+          `Failed to connect to backend at ${API_BASE_URL}. ` +
+          `Make sure the backend is running on port 8000. ` +
+          `Check: http://localhost:8000/health`
+        );
+      }
+      throw err;
     }
 
     const uploadData = await response.json();

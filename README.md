@@ -48,6 +48,35 @@ npm run dev
 
 Then open `http://localhost:5173` in their browser.
 
+## Troubleshooting
+
+### "Failed to fetch" error when uploading files
+
+If you see a "Failed to fetch" error when trying to upload a file:
+
+1. **Make sure the backend is running:**
+   - Check that you see the backend startup message in the terminal
+   - Visit `http://localhost:8000/health` in your browser - it should return `{"status": "healthy"}`
+
+2. **Check the frontend API URL:**
+   - The frontend defaults to `http://localhost:8000`
+   - If your backend is on a different port, create a `.env` file in `nn-scorecard/frontend/`:
+     ```
+     VITE_API_URL=http://localhost:8000
+     ```
+   - Then restart the frontend server
+
+3. **Verify CORS settings:**
+   - The backend allows requests from `http://localhost:5173` by default
+   - If your frontend runs on a different port, update the backend `.env` file in `nn-scorecard/backend/`:
+     ```
+     CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+     ```
+   - Then restart the backend server
+
+4. **Check browser console:**
+   - Open browser DevTools (F12) and check the Console tab for detailed error messages
+
 ## Usage
 
 1. Upload your CSV file with pre-processed credit risk data
