@@ -403,8 +403,12 @@ class ScorecardGenerator:
                 total_score += points
                 matched_features += 1
         
+        # Apply offset to complete the linear transformation to [0, 100]
+        # Formula: scaled_score = raw_score * scale_factor + offset
+        # The scaled_points already have scale_factor applied, now add offset
+        total_score = total_score + scorecard.offset
+        
         # Clamp to valid range [0, 100]
-        # scaled_points are already in the 0-100 range, so just round and clamp
         total_score = int(round(total_score))
         total_score = max(self.score_min, min(self.score_max, total_score))
         

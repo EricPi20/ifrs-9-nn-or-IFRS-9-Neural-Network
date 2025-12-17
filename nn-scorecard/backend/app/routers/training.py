@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import uuid
 import asyncio
@@ -19,6 +19,14 @@ from app.models.neural_network import (
     NeuralNetwork, calculate_auc, calculate_ks,
     generate_roc_curve, generate_score_histogram, generate_score_bands
 )
+
+# Try to import SHAP, but don't fail if it's not available
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+    print("[WARNING] SHAP not available. Install with: pip install shap")
 
 router = APIRouter()
 
@@ -70,6 +78,321 @@ class TrainingConfig(BaseModel):
 class TrainingRequest(BaseModel):
     file_path: str
     config: TrainingConfig
+
+
+# === FEATURE IMPORTANCE CALCULATION FUNCTIONS ===
+
+def calculate_shap_importance(
+    model: NeuralNetwork,
+    X_train: np.ndarray,
+    X_test: np.ndarray = None,
+    max_samples: int = 100,
+    feature_names: List[str] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate SHAP-based feature importance.
+    
+    Args:
+        model: Trained neural network
+        X_train: Training data (normalized)
+        X_test: Test data to explain (optional, uses sample from X_train if None)
+        max_samples: Max samples for background dataset
+        feature_names: List of feature names for logging
+        
+    Returns:
+        feature_importance: Feature importance as fractions (sum = 1.0)
+        feature_importance_pct: Feature importance as percentages (sum = 100%)
+    """
+    if not SHAP_AVAILABLE:
+        raise ImportError("SHAP not available. Install with: pip install shap")
+    
+    print(f"[SHAP] Starting SHAP calculation with {len(X_train)} training samples...")
+    
+    # Sample background data for SHAP
+    background_size = min(max_samples, len(X_train))
+    background_indices = np.random.choice(len(X_train), background_size, replace=False)
+    background = X_train[background_indices]
+    
+    print(f"[SHAP] Background dataset: {background.shape}")
+    
+    # Create a wrapper for the model
+    def model_predict(X):
+        return model.predict_proba(X)
+    
+    # Use KernelExplainer for model-agnostic explanation
+    explainer = shap.KernelExplainer(model_predict, background)
+    
+    # Calculate SHAP values on test set or sample
+    if X_test is not None:
+        sample_size = min(100, len(X_test))
+        samples = X_test[:sample_size]
+        print(f"[SHAP] Explaining {sample_size} test samples...")
+    else:
+        sample_size = min(100, len(X_train))
+        samples = X_train[:sample_size]
+        print(f"[SHAP] Explaining {sample_size} training samples...")
+    
+    # Calculate SHAP values
+    shap_values = explainer.shap_values(samples)
+    
+    # Calculate feature importance as mean absolute SHAP value
+    feature_importance = np.abs(shap_values).mean(axis=0)
+    
+    # Normalize to sum to 1.0
+    if feature_importance.sum() > 0:
+        feature_importance = feature_importance / feature_importance.sum()
+    else:
+        # Fallback to uniform distribution
+        feature_importance = np.ones(len(feature_importance)) / len(feature_importance)
+    
+    # Convert to percentages (sum = 100%)
+    feature_importance_pct = feature_importance * 100
+    
+    # Log results
+    print(f"\n[SHAP] Feature Importance Calculated:")
+    print(f"[SHAP] Range: {feature_importance_pct.min():.2f}% - {feature_importance_pct.max():.2f}%")
+    print(f"[SHAP] Mean: {feature_importance_pct.mean():.2f}%")
+    print(f"[SHAP] Total: {feature_importance_pct.sum():.2f}%")
+    
+    if feature_names:
+        print(f"\n[SHAP] Top 5 Most Important Features:")
+        sorted_indices = np.argsort(feature_importance_pct)[::-1]
+        for i in range(min(5, len(feature_names))):
+            idx = sorted_indices[i]
+            print(f"  {i+1}. {feature_names[idx]}: {feature_importance_pct[idx]:.2f}%")
+    
+    return feature_importance, feature_importance_pct
+
+
+def calculate_permutation_importance(
+    model: NeuralNetwork,
+    X: np.ndarray,
+    y: np.ndarray,
+    n_repeats: int = 10,
+    feature_names: List[str] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate permutation-based feature importance.
+    
+    Measures actual prediction impact by shuffling each feature
+    and measuring the decrease in model performance (AUC).
+    
+    Args:
+        model: Trained neural network
+        X: Data to evaluate on
+        y: True labels
+        n_repeats: Number of times to permute each feature
+        feature_names: List of feature names for logging
+        
+    Returns:
+        importance: Feature importance as fractions (sum = 1.0)
+        importance_pct: Feature importance as percentages (sum = 100%)
+    """
+    print(f"[PERMUTATION] Starting permutation importance calculation...")
+    print(f"[PERMUTATION] Data shape: {X.shape}, Repeats: {n_repeats}")
+    
+    baseline_preds = model.predict_proba(X)
+    baseline_auc = calculate_auc(y, baseline_preds)
+    
+    print(f"[PERMUTATION] Baseline AUC: {baseline_auc:.4f}")
+    
+    importances = []
+    
+    for feat_idx in range(X.shape[1]):
+        importance_decreases = []
+        
+        for repeat in range(n_repeats):
+            X_permuted = X.copy()
+            np.random.shuffle(X_permuted[:, feat_idx])
+            
+            permuted_preds = model.predict_proba(X_permuted)
+            permuted_auc = calculate_auc(y, permuted_preds)
+            
+            # Importance = decrease in performance
+            importance_decreases.append(baseline_auc - permuted_auc)
+        
+        mean_importance = np.mean(importance_decreases)
+        importances.append(mean_importance)
+        
+        if feature_names and feat_idx < len(feature_names):
+            print(f"[PERMUTATION] Feature {feat_idx} ({feature_names[feat_idx]}): AUC decrease = {mean_importance:.4f}")
+    
+    importances = np.array(importances)
+    
+    # Ensure non-negative (some features might not decrease performance)
+    importances = np.maximum(importances, 0)
+    
+    # Normalize to sum to 1.0
+    if importances.sum() > 0:
+        importances = importances / importances.sum()
+    else:
+        # If no feature showed importance, use uniform distribution
+        importances = np.ones(len(importances)) / len(importances)
+    
+    # Convert to percentages (sum = 100%)
+    importances_pct = importances * 100
+    
+    # Log results
+    print(f"\n[PERMUTATION] Feature Importance Calculated:")
+    print(f"[PERMUTATION] Range: {importances_pct.min():.2f}% - {importances_pct.max():.2f}%")
+    print(f"[PERMUTATION] Mean: {importances_pct.mean():.2f}%")
+    print(f"[PERMUTATION] Total: {importances_pct.sum():.2f}%")
+    
+    if feature_names:
+        print(f"\n[PERMUTATION] Top 5 Most Important Features:")
+        sorted_indices = np.argsort(importances_pct)[::-1]
+        for i in range(min(5, len(feature_names))):
+            idx = sorted_indices[i]
+            print(f"  {i+1}. {feature_names[idx]}: {importances_pct[idx]:.2f}%")
+    
+    return importances, importances_pct
+
+
+def calculate_improved_weight_importance(
+    model: NeuralNetwork,
+    feature_names: List[str] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate improved weight-based feature importance.
+    
+    Uses layer-wise propagation for multi-layer networks.
+    
+    Args:
+        model: Trained neural network
+        feature_names: List of feature names for logging
+        
+    Returns:
+        importance: Feature importance as fractions (sum = 1.0)
+        importance_pct: Feature importance as percentages (sum = 100%)
+    """
+    print(f"[WEIGHT] Calculating improved weight-based importance...")
+    
+    if len(model.weights) == 1:
+        # Linear model: just use weights
+        importance = np.abs(model.weights[0].flatten())
+        print(f"[WEIGHT] Linear model detected")
+    else:
+        # Multi-layer: compute effective weight by layer-wise propagation
+        effective_weights = np.abs(model.weights[0])  # First layer
+        print(f"[WEIGHT] Multi-layer model: {len(model.weights)} layers")
+        
+        for i in range(1, len(model.weights)):
+            # Propagate importance through network
+            effective_weights = effective_weights @ np.abs(model.weights[i])
+        
+        importance = effective_weights.flatten()
+    
+    # Add skip connection weights if present
+    if hasattr(model, 'skip_weight') and model.skip_weight is not None:
+        skip_importance = np.abs(model.skip_weight.flatten())
+        importance = importance + skip_importance
+        print(f"[WEIGHT] Added skip connection weights")
+    
+    # Normalize to sum to 1.0
+    if importance.sum() > 0:
+        importance = importance / importance.sum()
+    else:
+        importance = np.ones(len(importance)) / len(importance)
+    
+    # Convert to percentages (sum = 100%)
+    importance_pct = importance * 100
+    
+    # Log results
+    print(f"\n[WEIGHT] Feature Importance Calculated:")
+    print(f"[WEIGHT] Range: {importance_pct.min():.2f}% - {importance_pct.max():.2f}%")
+    print(f"[WEIGHT] Mean: {importance_pct.mean():.2f}%")
+    print(f"[WEIGHT] Total: {importance_pct.sum():.2f}%")
+    
+    if feature_names:
+        print(f"\n[WEIGHT] Top 5 Most Important Features:")
+        sorted_indices = np.argsort(importance_pct)[::-1]
+        for i in range(min(5, len(feature_names))):
+            idx = sorted_indices[i]
+            print(f"  {i+1}. {feature_names[idx]}: {importance_pct[idx]:.2f}%")
+    
+    return importance, importance_pct
+
+
+def calculate_feature_importance_with_fallback(
+    model: NeuralNetwork,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray = None,
+    y_test: np.ndarray = None,
+    feature_names: List[str] = None,
+    use_shap: bool = True,
+    use_permutation: bool = True
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate feature importance with automatic fallback.
+    
+    Priority:
+    1. SHAP (if available and use_shap=True)
+    2. Permutation (if use_permutation=True)
+    3. Improved weight-based
+    
+    Args:
+        model: Trained neural network
+        X_train: Training data
+        y_train: Training labels
+        X_test: Test data (optional)
+        y_test: Test labels (optional)
+        feature_names: List of feature names
+        use_shap: Whether to try SHAP first
+        use_permutation: Whether to try permutation as fallback
+        
+    Returns:
+        importance: Feature importance as fractions (sum = 1.0)
+        importance_pct: Feature importance as percentages (sum = 100%)
+    """
+    print(f"\n{'='*60}")
+    print("[IMPORTANCE] Calculating Feature Importance")
+    print(f"{'='*60}")
+    
+    # Try SHAP first if available and enabled
+    if use_shap and SHAP_AVAILABLE:
+        try:
+            print("[IMPORTANCE] Attempting SHAP calculation...")
+            importance, importance_pct = calculate_shap_importance(
+                model, X_train, X_test, 
+                max_samples=100,
+                feature_names=feature_names
+            )
+            print("[IMPORTANCE] ✓ SHAP calculation successful")
+            return importance, importance_pct
+        except Exception as e:
+            print(f"[IMPORTANCE] ✗ SHAP failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Try permutation importance as fallback
+    if use_permutation:
+        try:
+            print("[IMPORTANCE] Attempting permutation importance calculation...")
+            # Use test set if available, otherwise use training set
+            X_eval = X_test if X_test is not None else X_train
+            y_eval = y_test if y_test is not None else y_train
+            
+            importance, importance_pct = calculate_permutation_importance(
+                model, X_eval, y_eval,
+                n_repeats=10,
+                feature_names=feature_names
+            )
+            print("[IMPORTANCE] ✓ Permutation calculation successful")
+            return importance, importance_pct
+        except Exception as e:
+            print(f"[IMPORTANCE] ✗ Permutation failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Final fallback: improved weight-based importance
+    print("[IMPORTANCE] Using improved weight-based importance (fallback)")
+    importance, importance_pct = calculate_improved_weight_importance(
+        model, feature_names=feature_names
+    )
+    print("[IMPORTANCE] ✓ Weight-based calculation successful")
+    
+    return importance, importance_pct
 
 
 # === ENDPOINTS ===
@@ -191,12 +514,48 @@ async def get_validation_metrics(job_id: str):
     if job.get('status') != 'completed':
         raise HTTPException(status_code=400, detail="Training not completed")
     
-    # Get validation data, generate if not exists
+    # Check if we have test data available
+    has_test_data = job.get('y_test') is not None and job.get('test_scores') is not None
+    if has_test_data:
+        y_test_len = len(job.get('y_test')) if job.get('y_test') is not None else 0
+        scores_len = len(job.get('test_scores')) if job.get('test_scores') is not None else 0
+        print(f"[VALIDATION] Test data available: y_test={y_test_len}, test_scores={scores_len}")
+    
+    # Get validation data, generate if not exists or if we have test data but validation was generated without it
     validation_data = job.get('validation_data')
-    if not validation_data:
-        print(f"[VALIDATION] Validation data not found, generating...")
-        validation_data = generate_validation_data(job)
-        training_jobs[job_id]['validation_data'] = validation_data
+    
+    # If we have test data but validation data was generated with simulated data (n_samples=2000),
+    # regenerate it with real test data
+    should_regenerate = False
+    if validation_data:
+        n_samples_in_validation = validation_data.get('metrics', {}).get('n_samples', 0)
+        if has_test_data and n_samples_in_validation == 2000:
+            print(f"[VALIDATION] Validation data exists but appears to use simulated data (2000 samples)")
+            print(f"[VALIDATION] Regenerating with real test data ({y_test_len} samples)...")
+            should_regenerate = True
+        elif has_test_data and n_samples_in_validation != y_test_len:
+            print(f"[VALIDATION] Validation data sample count mismatch: validation={n_samples_in_validation}, test={y_test_len}")
+            print(f"[VALIDATION] Regenerating with real test data...")
+            should_regenerate = True
+    
+    if not validation_data or should_regenerate:
+        if not has_test_data:
+            if not validation_data:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Test data not available. Please ensure training completed successfully."
+                )
+            else:
+                print(f"[VALIDATION] WARNING: Test data not available, using existing validation data")
+        else:
+            print(f"[VALIDATION] Generating validation data from test data...")
+            validation_data = generate_validation_data(job)
+            training_jobs[job_id]['validation_data'] = validation_data
+            n_samples_used = validation_data.get('metrics', {}).get('n_samples', 0)
+            print(f"[VALIDATION] Validation data generated and cached for job {job_id}")
+            print(f"[VALIDATION] Used {n_samples_used} samples from test set")
+    else:
+        print(f"[VALIDATION] Using cached validation data for job {job_id}")
     
     return validation_data
 
@@ -598,39 +957,39 @@ def generate_scorecard(job_id: str, job: dict) -> dict:
     
     # Use actual feature importance from trained model
     feature_importance = job.get('feature_importance', [])
+    feature_importance_pct = job.get('feature_importance_pct', [])
     model = job.get('model')
+    
     print(f"[SCORECARD] Feature importance available: {len(feature_importance) if feature_importance else 0} values")
+    print(f"[SCORECARD] Feature importance_pct available: {len(feature_importance_pct) if feature_importance_pct else 0} values")
     print(f"[SCORECARD] Model available: {model is not None}")
-    if feature_importance:
-        print(f"[SCORECARD] Feature importance values: {feature_importance[:5]}...")  # Print first 5
     
     if feature_importance and len(feature_importance) == len(feature_names) and model is not None:
-        # Use actual feature importance from model
-        print(f"[SCORECARD] Using actual feature importance from trained model")
+        # Use actual feature importance from model (already calculated with SHAP/Permutation/Weight-based)
+        print(f"\n[SCORECARD] Using feature importance from trained model:")
         print(f"[SCORECARD] Config random_seed: {config.get('random_seed', 'N/A')}")
         print(f"[SCORECARD] Config learning_rate: {config.get('learning_rate', 'N/A')}")
         print(f"[SCORECARD] Config loss_function: {config.get('loss_function', 'N/A')}")
         print(f"[SCORECARD] Config epochs: {config.get('epochs', 'N/A')}")
         print(f"[SCORECARD] Config hidden_layers: {config.get('network', {}).get('hidden_layers', 'N/A')}")
         
-        # Feature importance is normalized (sums to 1), convert to percentages
-        # Add small config-based variation to ensure different configs show different importance
-        # This helps when models converge to similar weights due to same random_seed
-        config_variation = 0.0
-        if config.get('random_seed'):
-            # Use config hash to add small deterministic variation
-            config_hash = hash(str(sorted(config.items()))) % 1000
-            np.random.seed(config_hash)
-            # Add small random variation (0-2%) to each feature importance
-            variation = np.random.uniform(-0.01, 0.01, len(feature_importance))
-            adjusted_importance = np.array(feature_importance) + variation
-            # Ensure all values are positive and renormalize
-            adjusted_importance = np.maximum(adjusted_importance, 0.001)
-            adjusted_importance = adjusted_importance / np.sum(adjusted_importance)
-            weight_percentages = adjusted_importance * 100
-            print(f"[SCORECARD] Applied config-based variation to feature importance")
+        # Use pre-calculated percentage values if available, otherwise convert
+        if feature_importance_pct and len(feature_importance_pct) == len(feature_names):
+            weight_percentages = np.array(feature_importance_pct)
+            print(f"[SCORECARD] Using pre-calculated percentage values")
         else:
+            # Feature importance is normalized (sums to 1), convert to percentages
             weight_percentages = np.array(feature_importance) * 100
+            print(f"[SCORECARD] Converting normalized importance to percentages")
+        
+        # Display feature importance distribution
+        print(f"\n[SCORECARD] Feature Importance Distribution (%):")
+        for feat_name, pct in zip(feature_names, weight_percentages):
+            print(f"  {feat_name}: {pct:.2f}%")
+        print(f"  Total: {weight_percentages.sum():.2f}%")
+        print(f"  Range: {weight_percentages.min():.2f}% - {weight_percentages.max():.2f}%")
+        print(f"  Mean: {weight_percentages.mean():.2f}%")
+        print(f"  Std Dev: {weight_percentages.std():.2f}%")
         
         # Extract actual weights from model for raw_points calculation
         # Get first layer weights and compute effective weight per feature
@@ -789,42 +1148,113 @@ def generate_validation_data(job: dict) -> dict:
     test_scores = job.get('test_scores')  # Use actual test scores if available
     data_stats = job.get('data_stats', {})
     
+    # Debug logging
+    print(f"[VALIDATION] Debug - y_test type: {type(y_test)}, is None: {y_test is None}")
+    print(f"[VALIDATION] Debug - test_scores type: {type(test_scores)}, is None: {test_scores is None}")
+    if y_test is not None:
+        print(f"[VALIDATION] Debug - y_test length: {len(y_test) if hasattr(y_test, '__len__') else 'N/A'}")
+    if test_scores is not None:
+        print(f"[VALIDATION] Debug - test_scores length: {len(test_scores) if hasattr(test_scores, '__len__') else 'N/A'}")
+    
     # Use real test data if available
     all_scores = None
     y_true = None
     y_scores = None
     
     if y_test is not None and test_scores is not None:
+        try:
+            y_test_arr = np.array(y_test)
+            all_scores_arr = np.array(test_scores)
+            n_samples = len(y_test_arr)
+            n_bad = int(np.sum(y_test_arr))
+            n_good = n_samples - n_bad
+            bad_rate = n_bad / n_samples if n_samples > 0 else 0.15
+            
+            print(f"[VALIDATION] Loaded test data: {n_samples} samples")
+            print(f"[VALIDATION] Score array shape: {all_scores_arr.shape}, dtype: {all_scores_arr.dtype}")
+            print(f"[VALIDATION] Score stats - min: {np.min(all_scores_arr):.2f}, max: {np.max(all_scores_arr):.2f}, mean: {np.mean(all_scores_arr):.2f}, std: {np.std(all_scores_arr):.4f}")
+            
+            # Verify scores are valid - prioritize using real test data
+            # Only reject if data is completely invalid (all zeros, has NaN/Inf, or length mismatch)
+            has_valid_length = len(all_scores_arr) == n_samples
+            has_nonzero_scores = not np.all(all_scores_arr == 0)
+            has_no_nan = not np.any(np.isnan(all_scores_arr))
+            has_no_inf = not np.any(np.isinf(all_scores_arr))
+            # For variance, be very lenient - only reject if truly constant (std < 0.001)
+            has_variance = np.std(all_scores_arr) >= 0.001  # Very low threshold - prefer real data
+            
+            print(f"[VALIDATION] Validation checks:")
+            print(f"[VALIDATION]   - Valid length: {has_valid_length} (scores: {len(all_scores_arr)}, y_test: {n_samples})")
+            print(f"[VALIDATION]   - Non-zero scores: {has_nonzero_scores}")
+            print(f"[VALIDATION]   - No NaN: {has_no_nan} (NaN count: {np.sum(np.isnan(all_scores_arr)) if not has_no_nan else 0})")
+            print(f"[VALIDATION]   - No Inf: {has_no_inf} (Inf count: {np.sum(np.isinf(all_scores_arr)) if not has_no_inf else 0})")
+            print(f"[VALIDATION]   - Has variance: {has_variance} (std: {np.std(all_scores_arr):.6f}, threshold: 0.001)")
+            
+            # Use real test data if basic validity checks pass
+            # Prioritize real data over synthetic - only reject if truly invalid
+            # Critical checks: length match, non-zero, no NaN/Inf
+            # Variance check is lenient - only reject if truly constant
+            if has_valid_length and has_nonzero_scores and has_no_nan and has_no_inf:
+                # Use real data even if variance is low (might be edge case)
+                if not has_variance:
+                    print(f"[VALIDATION] WARNING: Low variance detected (std={np.std(all_scores_arr):.6f}) but using real test data anyway")
+                
+                # Use actual scores and labels (already in correct order)
+                # Ensure consistent ordering by using the original order (no shuffling)
+                all_scores = all_scores_arr.copy()
+                y_true = y_test_arr.copy()
+                y_scores = all_scores / 100.0  # Normalize to 0-1 for ROC calculation
+                
+                print(f"[VALIDATION] ✓ Using real test data: {n_samples} samples, {n_bad} bad, {n_good} good")
+                print(f"[VALIDATION] Score range: {np.min(all_scores):.2f} to {np.max(all_scores):.2f}")
+                print(f"[VALIDATION] Score std: {np.std(all_scores):.2f}")
+                print(f"[VALIDATION] Bad rate: {bad_rate*100:.2f}%")
+            else:
+                # Even if some checks fail, try to use real data if it's not completely broken
+                # Only reject if length mismatch (critical) or all zeros (critical)
+                if has_valid_length and has_nonzero_scores:
+                    # Use real data even if it has NaN/Inf - we'll clean it
+                    print(f"[VALIDATION] WARNING: Some validation checks failed, but attempting to use real test data")
+                    if not has_no_nan:
+                        print(f"[VALIDATION]   - Cleaning NaN values: {np.sum(np.isnan(all_scores_arr))} NaNs")
+                        # Replace NaN with median
+                        median_score = np.nanmedian(all_scores_arr)
+                        all_scores_arr = np.where(np.isnan(all_scores_arr), median_score, all_scores_arr)
+                    if not has_no_inf:
+                        print(f"[VALIDATION]   - Cleaning Inf values: {np.sum(np.isinf(all_scores_arr))} Infs")
+                        # Replace Inf with max/min
+                        finite_scores = all_scores_arr[np.isfinite(all_scores_arr)]
+                        if len(finite_scores) > 0:
+                            all_scores_arr = np.clip(all_scores_arr, np.min(finite_scores), np.max(finite_scores))
+                    
+                    # Now use the cleaned data
+                    all_scores = all_scores_arr.copy()
+                    y_true = y_test_arr.copy()
+                    y_scores = all_scores / 100.0
+                    
+                    print(f"[VALIDATION] ✓ Using real test data (after cleaning): {n_samples} samples, {n_bad} bad, {n_good} good")
+                    print(f"[VALIDATION] Score range: {np.min(all_scores):.2f} to {np.max(all_scores):.2f}")
+                    print(f"[VALIDATION] Score std: {np.std(all_scores):.2f}")
+                    print(f"[VALIDATION] Bad rate: {bad_rate*100:.2f}%")
+                else:
+                    print(f"[VALIDATION] ✗ CRITICAL: Test scores validation failed - cannot use real data")
+                    if not has_valid_length:
+                        print(f"[VALIDATION]   - Length mismatch: scores={len(all_scores_arr)}, y_test={n_samples}")
+                    if not has_nonzero_scores:
+                        print(f"[VALIDATION]   - All scores are zero")
+        except Exception as e:
+            print(f"[VALIDATION] ✗ ERROR processing test data: {str(e)}")
+            print(f"[VALIDATION]   - Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[VALIDATION]   - Traceback: {traceback.format_exc()}")
+    
+    # Only generate synthetic scores if we don't have test_scores at all
+    if all_scores is None and y_test is not None and test_scores is None:
+        # Have y_test but no scores, generate scores from metrics
+        # This should rarely happen if test_scores are properly saved during training
         y_test_arr = np.array(y_test)
-        all_scores_arr = np.array(test_scores)
         n_samples = len(y_test_arr)
         n_bad = int(np.sum(y_test_arr))
-        n_good = n_samples - n_bad
-        bad_rate = n_bad / n_samples if n_samples > 0 else 0.15
-        
-        # Verify scores are valid
-        if len(all_scores_arr) == n_samples and not np.all(all_scores_arr == 0) and not np.any(np.isnan(all_scores_arr)) and np.std(all_scores_arr) >= 0.1:
-            # Use actual scores and labels (already in correct order)
-            all_scores = all_scores_arr
-            y_true = y_test_arr
-            y_scores = all_scores / 100.0  # Normalize to 0-1 for ROC calculation
-            
-            print(f"[VALIDATION] Using real test data: {n_samples} samples, {n_bad} bad, {n_good} good")
-            print(f"[VALIDATION] Score range: {np.min(all_scores):.2f} to {np.max(all_scores):.2f}")
-            print(f"[VALIDATION] Score std: {np.std(all_scores):.2f}")
-            print(f"[VALIDATION] Bad rate: {bad_rate*100:.2f}%")
-        else:
-            print(f"[VALIDATION] WARNING: Test scores invalid or too concentrated")
-            if len(all_scores_arr) != n_samples:
-                print(f"[VALIDATION]   - Length mismatch: scores={len(all_scores_arr)}, y_test={n_samples}")
-            if np.std(all_scores_arr) < 0.1:
-                print(f"[VALIDATION]   - Std too low: {np.std(all_scores_arr):.4f}")
-    
-    if all_scores is None and y_test is not None:
-        # Have y_test but no scores, generate scores from metrics
-        y_test = np.array(y_test)
-        n_samples = len(y_test)
-        n_bad = int(np.sum(y_test))
         n_good = n_samples - n_bad
         bad_rate = n_bad / n_samples if n_samples > 0 else 0.15
         
@@ -833,23 +1263,56 @@ def generate_validation_data(job: dict) -> dict:
         separation = (auc - 0.5) * 60
         
         # Use job_id hash as seed to ensure different jobs get different validation data
-        # but same job always gets same data
+        # but same job always gets same data (deterministic)
         job_id_hash = hash(job.get('job_id', 'default')) % (2**31)
         np.random.seed(job_id_hash)
         good_scores = np.clip(np.random.normal(55 + separation, 15, n_good), 0, 100)
         bad_scores = np.clip(np.random.normal(45 - separation, 15, n_bad), 0, 100)
         all_scores = np.concatenate([good_scores, bad_scores])
-        y_true = y_test
+        y_true = y_test_arr.copy()
         
-        # Shuffle to match y_test order
+        # Shuffle to match y_test order using fixed seed for consistency
+        np.random.seed(job_id_hash)  # Reset seed for shuffle
         shuffle_idx = np.random.permutation(n_samples)
         all_scores = all_scores[shuffle_idx]
         y_true = y_true[shuffle_idx]
         y_scores = all_scores / 100.0
         
-        print(f"[VALIDATION] Using real y_test with generated scores: {n_samples} samples, {n_bad} bad")
-    else:
-        # Fallback to simulated data
+        print(f"[VALIDATION] WARNING: Using real y_test with generated scores (test_scores missing): {n_samples} samples, {n_bad} bad")
+    
+    # Emergency check: if we have test_scores but all_scores is still None, something went wrong
+    if all_scores is None and test_scores is not None:
+        # This should never happen - we have test_scores but didn't use them
+        print(f"[VALIDATION] ✗ CRITICAL ERROR: test_scores exists but were not used!")
+        print(f"[VALIDATION]   - test_scores length: {len(test_scores)}")
+        print(f"[VALIDATION]   - y_test: {y_test is not None}")
+        print(f"[VALIDATION]   - This indicates a bug in validation logic")
+        # Try one more time with minimal validation - just use the data as-is
+        try:
+            y_test_arr = np.array(y_test) if y_test is not None else np.array([])
+            all_scores_arr = np.array(test_scores)
+            if len(y_test_arr) > 0 and len(all_scores_arr) > 0 and len(y_test_arr) == len(all_scores_arr):
+                print(f"[VALIDATION] Attempting emergency recovery with minimal validation...")
+                # Clean any NaN/Inf but use the data
+                if np.any(np.isnan(all_scores_arr)) or np.any(np.isinf(all_scores_arr)):
+                    median_score = np.nanmedian(all_scores_arr)
+                    all_scores_arr = np.where(np.isnan(all_scores_arr) | np.isinf(all_scores_arr), median_score, all_scores_arr)
+                all_scores = all_scores_arr.copy()
+                y_true = y_test_arr.copy()
+                y_scores = all_scores / 100.0
+                n_samples = len(y_true)
+                n_bad = int(np.sum(y_true))
+                n_good = n_samples - n_bad
+                bad_rate = n_bad / n_samples if n_samples > 0 else 0.15
+                print(f"[VALIDATION] ✓ Emergency recovery successful: {n_samples} samples")
+        except Exception as e:
+            print(f"[VALIDATION] Emergency recovery failed: {e}")
+            import traceback
+            print(f"[VALIDATION] Traceback: {traceback.format_exc()}")
+    
+    if all_scores is None:
+        # Fallback to simulated data (only if we truly have no real data)
+        print(f"[VALIDATION] No real test data available, using simulated data")
         n_samples = 2000
         bad_rate = 0.15
         n_bad = int(n_samples * bad_rate)
@@ -1198,17 +1661,38 @@ async def run_training(job_id: str, request: TrainingRequest):
         final_test_pred = nn.predict_proba(X_test)
         test_scores = (1 - final_test_pred) * 100  # Convert to 0-100 score
         
+        print(f"[TRAINING] Saving test data for validation: {len(y_test)} samples")
+        print(f"[TRAINING] Test scores shape: {test_scores.shape}, range: [{np.min(test_scores):.2f}, {np.max(test_scores):.2f}]")
+        
         # Save test data for validation data generation
+        # IMPORTANT: Save as lists to ensure consistency and avoid numpy serialization issues
+        # For very large datasets, this conversion might take time but is necessary
+        print(f"[TRAINING] Converting test data to lists (this may take a moment for large datasets)...")
         training_jobs[job_id]['y_test'] = y_test.tolist()
         training_jobs[job_id]['test_scores'] = test_scores.tolist()
         training_jobs[job_id]['job_id'] = job_id  # Add job_id for validation hash
         
+        # Verify data was saved correctly
+        saved_y_test_len = len(training_jobs[job_id]['y_test'])
+        saved_scores_len = len(training_jobs[job_id]['test_scores'])
+        print(f"[TRAINING] Saved test data - y_test: {saved_y_test_len} samples, test_scores: {saved_scores_len} samples")
+        
+        if saved_y_test_len != len(y_test) or saved_scores_len != len(test_scores):
+            print(f"[TRAINING] WARNING: Data length mismatch after saving!")
+            print(f"[TRAINING]   Original: y_test={len(y_test)}, test_scores={len(test_scores)}")
+            print(f"[TRAINING]   Saved: y_test={saved_y_test_len}, test_scores={saved_scores_len}")
+        
         # Generate validation data using the proper function
-        # This will be called by the validation endpoint if needed
-        # We'll generate it here to have it ready
-        validation_data = generate_validation_data(training_jobs[job_id])
-        training_jobs[job_id]['validation_data'] = validation_data
-        print(f"[VALIDATION] Generated validation data with {len(validation_data.get('histogram', {}).get('bin_centers', []))} bins")
+        # Only generate if not already cached to ensure consistency
+        if 'validation_data' not in training_jobs[job_id] or training_jobs[job_id]['validation_data'] is None:
+            print(f"[VALIDATION] Generating validation data from test set ({len(y_test)} samples)...")
+            validation_data = generate_validation_data(training_jobs[job_id])
+            training_jobs[job_id]['validation_data'] = validation_data
+            n_samples_used = validation_data.get('metrics', {}).get('n_samples', 0)
+            print(f"[VALIDATION] Generated validation data with {len(validation_data.get('histogram', {}).get('bin_centers', []))} bins")
+            print(f"[VALIDATION] Validation data used {n_samples_used} samples (expected {len(y_test)})")
+        else:
+            print(f"[VALIDATION] Using existing validation data (already cached)")
         
         # Save bin stats for scorecard
         bin_stats = {}
@@ -1229,7 +1713,39 @@ async def run_training(job_id: str, request: TrainingRequest):
         
         training_jobs[job_id]['model'] = nn
         training_jobs[job_id]['feature_names'] = features
-        training_jobs[job_id]['feature_importance'] = nn.get_feature_importance().tolist()
+        
+        # Calculate feature importance using SHAP with fallback methods
+        print(f"\n[TRAINING] Calculating feature importance for {len(features)} features...")
+        try:
+            feature_importance, feature_importance_pct = calculate_feature_importance_with_fallback(
+                model=nn,
+                X_train=X_train,
+                y_train=y_train,
+                X_test=X_test,
+                y_test=y_test,
+                feature_names=features,
+                use_shap=True,  # Try SHAP first
+                use_permutation=True  # Fallback to permutation
+            )
+            
+            # Store both the normalized importance and percentage values
+            training_jobs[job_id]['feature_importance'] = feature_importance.tolist()
+            training_jobs[job_id]['feature_importance_pct'] = feature_importance_pct.tolist()
+            
+            print(f"\n[TRAINING] Feature Importance Summary (%):")
+            for i, (feat, pct) in enumerate(zip(features, feature_importance_pct)):
+                print(f"  {feat}: {pct:.2f}%")
+            print(f"  Total: {feature_importance_pct.sum():.2f}%")
+            
+        except Exception as e:
+            print(f"[TRAINING] Error calculating feature importance: {e}")
+            import traceback
+            traceback.print_exc()
+            # Ultimate fallback: use the basic method
+            basic_importance = nn.get_feature_importance()
+            training_jobs[job_id]['feature_importance'] = basic_importance.tolist()
+            training_jobs[job_id]['feature_importance_pct'] = (basic_importance * 100).tolist()
+        
         training_jobs[job_id]['bin_stats'] = bin_stats
         training_jobs[job_id]['data_stats'] = {
             'n_train': len(train_idx),

@@ -434,6 +434,13 @@ class TestValidationErrors:
         errors = exc_info.value.errors()
         assert any("Loss type must be one of" in str(err.get("msg", "")) for err in errors)
     
+    def test_loss_config_invalid_auc_loss_type(self):
+        """Test LossConfig with invalid auc_loss_type."""
+        with pytest.raises(ValidationError) as exc_info:
+            LossConfig(auc_loss_type="invalid_auc_type")
+        errors = exc_info.value.errors()
+        assert any("AUC loss type must be one of" in str(err.get("msg", "")) for err in errors)
+    
     def test_scorecard_invalid_score_range(self):
         """Test Scorecard with invalid score_range."""
         with pytest.raises(ValidationError) as exc_info:
@@ -742,6 +749,8 @@ class TestDefaults:
         assert config.loss_type == "combined"
         assert config.loss_alpha == 0.3
         assert config.auc_gamma == 2.0
+        assert config.auc_loss_type == "pairwise"
+        assert config.margin == 0.0
     
     def test_training_config_defaults(self):
         """Test TrainingConfig defaults."""
@@ -758,7 +767,7 @@ class TestDefaults:
         assert config.learning_rate == 0.001
         assert config.batch_size == 256
         assert config.epochs == 100
-        assert config.early_stopping.enabled is True
+        assert config.early_stopping.enabled is False  # Default is disabled
         assert config.early_stopping.patience == 10  # Default value
         assert config.use_class_weights is True
     

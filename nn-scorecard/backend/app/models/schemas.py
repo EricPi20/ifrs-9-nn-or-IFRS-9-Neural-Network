@@ -325,6 +325,15 @@ class LossConfig(BaseModel):
         gt=0.0,
         description="Sharpness parameter for soft AUC"
     )
+    auc_loss_type: str = Field(
+        default='pairwise',
+        description="AUC surrogate for combined loss: 'pairwise', 'soft', or 'wmw'"
+    )
+    margin: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Margin for pairwise/WMW losses (enforces stricter separation between positive and negative samples)"
+    )
     
     @field_validator('loss_type')
     @classmethod
@@ -333,6 +342,15 @@ class LossConfig(BaseModel):
         allowed = ['bce', 'pairwise_auc', 'soft_auc', 'wmw', 'combined']
         if v not in allowed:
             raise ValueError(f'Loss type must be one of {allowed}')
+        return v
+    
+    @field_validator('auc_loss_type')
+    @classmethod
+    def validate_auc_loss_type(cls, v):
+        """Validate AUC loss type is supported."""
+        allowed = ['pairwise', 'soft', 'wmw']
+        if v not in allowed:
+            raise ValueError(f'AUC loss type must be one of {allowed}')
         return v
     
     @field_validator('loss_alpha')
@@ -348,7 +366,9 @@ class LossConfig(BaseModel):
             "example": {
                 "loss_type": "combined",
                 "loss_alpha": 0.3,
-                "auc_gamma": 2.0
+                "auc_gamma": 2.0,
+                "auc_loss_type": "pairwise",
+                "margin": 0.0
             }
         }
 
@@ -489,7 +509,9 @@ class TrainingConfig(BaseModel):
                 "loss": {
                     "loss_type": "combined",
                     "loss_alpha": 0.3,
-                    "auc_gamma": 2.0
+                    "auc_gamma": 2.0,
+                    "auc_loss_type": "pairwise",
+                    "margin": 0.0
                 },
                 "learning_rate": 0.001,
                 "batch_size": 256,
@@ -540,7 +562,9 @@ class TrainingRequest(BaseModel):
                     "loss": {
                         "loss_type": "combined",
                         "loss_alpha": 0.3,
-                        "auc_gamma": 2.0
+                        "auc_gamma": 2.0,
+                        "auc_loss_type": "pairwise",
+                        "margin": 0.0
                     },
                     "learning_rate": 0.001,
                     "batch_size": 256,

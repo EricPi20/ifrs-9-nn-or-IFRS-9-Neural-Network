@@ -315,8 +315,42 @@ class NeuralNetwork:
         return output.flatten()
     
     def get_feature_importance(self) -> np.ndarray:
-        importance = np.sum(np.abs(self.weights[0]), axis=1)
-        return importance / np.sum(importance)
+        """
+        Calculate improved weight-based feature importance.
+        
+        For multi-layer networks, this propagates importance through all layers
+        to better capture feature contribution to the final output.
+        
+        Returns:
+            np.ndarray: Normalized feature importance (sums to 1.0)
+        """
+        if len(self.weights) == 1:
+            # Linear model: just use absolute weights
+            importance = np.abs(self.weights[0].flatten())
+        else:
+            # Multi-layer network: propagate importance through layers
+            # Start with first layer weights
+            effective_weights = np.abs(self.weights[0])
+            
+            # Propagate through remaining layers
+            for i in range(1, len(self.weights)):
+                effective_weights = effective_weights @ np.abs(self.weights[i])
+            
+            importance = effective_weights.flatten()
+        
+        # Add skip connection contribution if present
+        if hasattr(self, 'skip_weight') and self.skip_weight is not None and self.skip_connection:
+            skip_importance = np.abs(self.skip_weight.flatten())
+            importance = importance + skip_importance
+        
+        # Normalize to sum to 1.0
+        if np.sum(importance) > 0:
+            importance = importance / np.sum(importance)
+        else:
+            # Fallback: uniform distribution
+            importance = np.ones(len(importance)) / len(importance)
+        
+        return importance
 
 
 def calculate_auc(y_true: np.ndarray, y_pred: np.ndarray) -> float:

@@ -39,9 +39,9 @@ build/
 
 # Data files (if they're large or sensitive)
 # Uncomment if you don't want to track data files
-# data/uploads/
-# data/models/
-# data/exports/
+data/uploads/
+data/models/
+data/exports/
 
 # Logs
 *.log
@@ -58,8 +58,8 @@ htmlcov/
 .tox/
 
 # Model files (uncomment if models are too large for git)
-# *.pt
-# *.pth
-# *.h5
-# *.pkl
+*.pt
+*.pth
+*.h5
+*.pkl
 

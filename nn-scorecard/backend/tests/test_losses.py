@@ -450,12 +450,39 @@ class TestFactoryFunction:
         config = {
             'loss_type': 'combined',
             'loss_alpha': 0.3,
-            'auc_loss_type': 'pairwise'
+            'auc_loss_type': 'pairwise',
+            'margin': 0.1
         }
         loss_fn = create_loss_function(config)
         assert isinstance(loss_fn, CombinedLoss)
         assert loss_fn.alpha == 0.3
         assert loss_fn.auc_loss_type == 'pairwise'
+    
+    def test_factory_combined_with_margin(self):
+        """Test factory creates CombinedLoss with margin parameter."""
+        config = {
+            'loss_type': 'combined',
+            'loss_alpha': 0.4,
+            'auc_loss_type': 'wmw',
+            'margin': 0.5
+        }
+        loss_fn = create_loss_function(config)
+        assert isinstance(loss_fn, CombinedLoss)
+        assert loss_fn.alpha == 0.4
+        assert loss_fn.auc_loss_type == 'wmw'
+    
+    def test_factory_combined_different_auc_types(self):
+        """Test factory creates CombinedLoss with different AUC types."""
+        for auc_type in ['pairwise', 'soft', 'wmw']:
+            config = {
+                'loss_type': 'combined',
+                'loss_alpha': 0.3,
+                'auc_loss_type': auc_type,
+                'margin': 0.0
+            }
+            loss_fn = create_loss_function(config)
+            assert isinstance(loss_fn, CombinedLoss)
+            assert loss_fn.auc_loss_type == auc_type
     
     def test_factory_handles_all_loss_types(self):
         """Test factory handles all supported loss types."""
@@ -468,6 +495,26 @@ class TestFactoryFunction:
             
             loss_fn = create_loss_function(config)
             assert loss_fn is not None
+    
+    def test_factory_pairwise_with_margin(self):
+        """Test factory creates PairwiseAUCLoss with margin."""
+        config = {
+            'loss_type': 'pairwise_auc',
+            'margin': 0.5
+        }
+        loss_fn = create_loss_function(config)
+        assert isinstance(loss_fn, PairwiseAUCLoss)
+        assert loss_fn.margin == 0.5
+    
+    def test_factory_wmw_with_margin(self):
+        """Test factory creates WMWLoss with margin."""
+        config = {
+            'loss_type': 'wmw',
+            'margin': 0.3
+        }
+        loss_fn = create_loss_function(config)
+        assert isinstance(loss_fn, WMWLoss)
+        assert loss_fn.margin == 0.3
 
 
 class TestEfficiency:

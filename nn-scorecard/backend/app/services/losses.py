@@ -17,6 +17,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from typing import Tuple, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PairwiseAUCLoss(nn.Module):
@@ -514,9 +517,16 @@ def create_loss_function(config) -> nn.Module:
                 - loss_type: 'bce', 'pairwise_auc', 'soft_auc', 'wmw', or 'combined'
                 - loss_alpha: BCE weight for combined loss (default: 0.3)
                 - auc_gamma: Gamma for soft AUC (default: 2.0)
+                - auc_loss_type: AUC surrogate for combined loss (default: 'pairwise')
+                - margin: Margin for pairwise/WMW losses (default: 0.0)
     
     Returns:
         PyTorch loss module
+    
+    Important:
+        - 'bce' optimizes for probability calibration only (no AR/Gini optimization)
+        - For AR/Gini optimization, use 'combined', 'pairwise_auc', 'soft_auc', or 'wmw'
+        - 'combined' balances calibration (BCE) and discrimination (AR), recommended for most cases
     
     Examples:
         >>> from app.models.schemas import LossConfig
@@ -540,6 +550,10 @@ def create_loss_function(config) -> nn.Module:
         margin = getattr(config, 'margin', 0.0)
     
     if loss_type == 'bce':
+        logger.warning(
+            "Using plain BCE loss: This optimizes for probability calibration only. "
+            "For AR/Gini optimization, consider using 'combined', 'pairwise_auc', 'soft_auc', or 'wmw'."
+        )
         return nn.BCELoss()
     elif loss_type == 'pairwise_auc':
         return PairwiseAUCLoss(margin=margin)
@@ -554,6 +568,11 @@ def create_loss_function(config) -> nn.Module:
             auc_loss_type = config.get('auc_loss_type', 'pairwise')
         else:
             auc_loss_type = getattr(config, 'auc_loss_type', 'pairwise')
+        
+        logger.info(
+            f"Creating CombinedLoss: alpha={loss_alpha:.2f} (BCE weight), "
+            f"auc_type={auc_loss_type}, margin={margin:.3f}"
+        )
         
         return CombinedLoss(
             alpha=loss_alpha,

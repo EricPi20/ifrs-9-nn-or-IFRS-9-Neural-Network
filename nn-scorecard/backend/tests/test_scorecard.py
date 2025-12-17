@@ -79,8 +79,8 @@ def discrete_bin_values_3_features():
 
 @pytest.fixture
 def generator():
-    """Create a ScorecardGenerator instance."""
-    return ScorecardGenerator(score_min=0, score_max=100)
+    """Create a ScorecardGenerator instance with scale_factor=1.0 for testing."""
+    return ScorecardGenerator(score_min=0, score_max=100, scale_factor=1.0)
 
 
 # ============================================================================
@@ -112,7 +112,7 @@ def test_generate_scorecard_with_discrete_bins(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -148,7 +148,7 @@ def test_points_calculation_formula(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -205,7 +205,7 @@ def test_total_score_in_range(
     scorecard = generator.generate(
         model=mock_model_3_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_3_features,
+        unique_values_original=discrete_bin_values_3_features,
         segment='TEST'
     )
     
@@ -252,7 +252,7 @@ def test_min_score_is_worst_combination(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -297,7 +297,7 @@ def test_max_score_is_best_combination(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -335,7 +335,7 @@ def test_calculate_score_breakdown(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -412,7 +412,7 @@ def test_single_feature_scorecard(generator):
     scorecard = generator.generate(
         model=model,
         feature_names=feature_names,
-        unique_values_per_feature=unique_values,
+        unique_values_original=unique_values,
         segment='TEST'
     )
     
@@ -440,7 +440,7 @@ def test_missing_feature_in_input_values(
     scorecard = generator.generate(
         model=mock_model_3_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_3_features,
+        unique_values_original=discrete_bin_values_3_features,
         segment='TEST'
     )
     
@@ -471,7 +471,7 @@ def test_all_bins_have_correct_structure(
     scorecard = generator.generate(
         model=mock_model_2_features,
         feature_names=feature_names,
-        unique_values_per_feature=discrete_bin_values_2_features,
+        unique_values_original=discrete_bin_values_2_features,
         segment='TEST'
     )
     
@@ -484,8 +484,8 @@ def test_all_bins_have_correct_structure(
             assert hasattr(bin_score, 'raw_points')
             assert hasattr(bin_score, 'scaled_points')
             assert isinstance(bin_score.input_value, (int, float))
-            assert isinstance(bin_score.raw_points, (int, float))
-            assert isinstance(bin_score.scaled_points, int)
+            assert isinstance(bin_score.raw_points, (int, float, np.floating))
+            assert isinstance(bin_score.scaled_points, (int, np.integer))
             
             # Verify raw_points = weight × input_value
             expected_raw = feature.weight * bin_score.input_value
