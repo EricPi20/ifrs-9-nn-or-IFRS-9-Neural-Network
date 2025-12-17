@@ -203,7 +203,7 @@ Environment variables can be set in a `.env` file in the backend directory:
 ```env
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 DEBUG=False
-MAX_UPLOAD_SIZE=104857600
+MAX_UPLOAD_SIZE_MB=500
 UPLOAD_DIR=data/uploads
 MODEL_DIR=data/models
 ```

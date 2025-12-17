@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     )
     
     MAX_UPLOAD_SIZE_MB: int = Field(
-        default=100,
+        default=500,
         description="Maximum file size in megabytes"
     )
     

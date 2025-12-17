@@ -30,10 +30,13 @@ fi
 echo "🚀 Starting Neural Network Scorecard Backend..."
 echo "📍 Backend will be available at: http://localhost:8000"
 echo "📚 API Documentation: http://localhost:8000/docs"
+echo "📦 Max upload size: 500MB (configurable via MAX_UPLOAD_SIZE_MB env var)"
 echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
 # Start the server
+# Note: FastAPI/Starlette handles large file uploads automatically
+# The MAX_UPLOAD_SIZE_MB limit is enforced in the application code
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 

@@ -111,7 +111,7 @@ export const FileUpload: React.FC = () => {
       'text/csv': ['.csv']
     },
     maxFiles: 1,
-    maxSize: 100 * 1024 * 1024, // 100MB
+    maxSize: 500 * 1024 * 1024, // 500MB
     disabled: !!uploadResponse // Disable dropzone after successful upload
   });
 
@@ -514,7 +514,7 @@ export const FileUpload: React.FC = () => {
         )}
         
         <p className="text-xs text-gray-400 mt-4">
-          Supported: .csv files up to 100MB
+          Supported: .csv files up to 500MB
         </p>
       </div>
       )}

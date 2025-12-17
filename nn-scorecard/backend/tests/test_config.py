@@ -40,8 +40,8 @@ class TestDefaultValues:
         """Test MAX_UPLOAD_SIZE_MB default value."""
         with patch.dict(os.environ, {}, clear=True):
             settings = Settings()
-            assert settings.MAX_UPLOAD_SIZE_MB == 100
-            assert settings.max_upload_size_bytes == 100 * 1024 * 1024
+            assert settings.MAX_UPLOAD_SIZE_MB == 500
+            assert settings.max_upload_size_bytes == 500 * 1024 * 1024
     
     def test_default_allowed_extensions(self):
         """Test ALLOWED_EXTENSIONS default value."""

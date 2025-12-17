@@ -29,7 +29,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       'text/csv': ['.csv']
     },
     maxFiles: 1,
-    maxSize: 100 * 1024 * 1024 // 100MB
+    maxSize: 500 * 1024 * 1024 // 500MB
   });
 
   const handleUpload = async () => {
@@ -86,7 +86,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         )}
         
         <p className="text-xs text-gray-400 mt-4">
-          Supported: .csv files up to 100MB
+          Supported: .csv files up to 500MB
         </p>
       </div>
 
