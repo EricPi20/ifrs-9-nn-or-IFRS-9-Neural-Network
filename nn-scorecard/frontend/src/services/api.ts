@@ -181,10 +181,10 @@ class ApiService {
         skip_connection: config.network?.skip_connection ?? false,
       },
       regularization: {
-        dropout_rate: config.network?.dropout_rate ?? config.regularization?.dropout_rate ?? 0.3,
+        dropout_rate: config.network?.dropout_rate ?? ((config.regularization as Record<string, any>)?.dropout_rate) ?? 0.3,
         l1_lambda: config.regularization?.l1_lambda ?? 0.0,
         l2_lambda: config.regularization?.l2_lambda ?? 0.001,
-      },
+      } as any,
       early_stopping: {
         enabled: config.early_stopping?.enabled ?? false,
         patience: config.early_stopping?.patience || 10,
@@ -274,6 +274,57 @@ class ApiService {
       method: 'GET',
     });
     return response;
+  }
+
+  async uploadOutOfTimeValidation(jobId: string, file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/api/training/${jobId}/out-of-time-validation`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+      throw new Error(error.detail || 'Upload failed');
+    }
+
+    return response.json();
+  }
+
+  async getOutOfTimeValidation(jobId: string) {
+    return this.request(`/api/training/${jobId}/out-of-time-validation`, {
+      method: 'GET',
+    });
+  }
+
+  async downloadScorecardCSV(jobId: string): Promise<Blob> {
+    const url = `${API_BASE_URL}/api/results/${jobId}/download-scorecard-csv`;
+    const response = await fetch(url, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Download failed' }));
+      throw new Error(error.detail || 'Download failed');
+    }
+
+    return response.blob();
+  }
+
+  async downloadConfigCSV(jobId: string): Promise<Blob> {
+    const url = `${API_BASE_URL}/api/results/${jobId}/download-config-csv`;
+    const response = await fetch(url, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Download failed' }));
+      throw new Error(error.detail || 'Download failed');
+    }
+
+    return response.blob();
   }
 }
 

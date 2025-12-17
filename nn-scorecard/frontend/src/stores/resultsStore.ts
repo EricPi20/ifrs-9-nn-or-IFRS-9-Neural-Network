@@ -5,6 +5,7 @@ export interface TrainingResult {
   created_at: string;
   segment: string;
   file_name?: string;
+  is_favorite?: boolean;
   config: {
     learning_rate: number;
     hidden_layers: number[];
@@ -86,5 +87,15 @@ export const getResult = (job_id: string): TrainingResult | undefined => {
 
 export const clearAllResults = (): void => {
   localStorage.removeItem(STORAGE_KEY);
+};
+
+export const toggleFavorite = (job_id: string): TrainingResult[] => {
+  const results = loadResults();
+  const resultIndex = results.findIndex(r => r.job_id === job_id);
+  if (resultIndex >= 0) {
+    results[resultIndex].is_favorite = !results[resultIndex].is_favorite;
+    saveResults(results);
+  }
+  return results;
 };
 

@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { loadResults, deleteResult, TrainingResult } from '../stores/resultsStore';
-import { Trash2, FileText, ExternalLink } from 'lucide-react';
+import { loadResults, deleteResult, toggleFavorite, TrainingResult } from '../stores/resultsStore';
+import { Trash2, FileText, ExternalLink, Star } from 'lucide-react';
 
 const Results: React.FC = () => {
   const navigate = useNavigate();
@@ -12,13 +12,35 @@ const Results: React.FC = () => {
 
   useEffect(() => {
     const storedResults = loadResults();
-    setResults(storedResults);
+    // Sort: favorites first, then by date (newest first)
+    const sortedResults = [...storedResults].sort((a, b) => {
+      // Favorites first
+      if (a.is_favorite && !b.is_favorite) return -1;
+      if (!a.is_favorite && b.is_favorite) return 1;
+      // Then by date (newest first)
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    setResults(sortedResults);
   }, []);
 
   const handleDelete = (job_id: string) => {
     const updatedResults = deleteResult(job_id);
     setResults(updatedResults);
     setShowDeleteConfirm(null);
+  };
+
+  const handleToggleFavorite = (job_id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent row click events
+    const updatedResults = toggleFavorite(job_id);
+    // Sort: favorites first, then by date (newest first)
+    const sortedResults = [...updatedResults].sort((a, b) => {
+      // Favorites first
+      if (a.is_favorite && !b.is_favorite) return -1;
+      if (!a.is_favorite && b.is_favorite) return 1;
+      // Then by date (newest first)
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    setResults(sortedResults);
   };
 
   const formatDate = (dateString: string) => {
@@ -74,6 +96,9 @@ const Results: React.FC = () => {
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 w-12">
+                    
+                  </th>
                   <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
                     Training ID
                   </th>
@@ -103,6 +128,22 @@ const Results: React.FC = () => {
               <tbody className="divide-y divide-gray-100">
                 {results.map((result) => (
                   <tr key={result.job_id} className="hover:bg-gray-50">
+                    {/* Favorite Star */}
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={(e) => handleToggleFavorite(result.job_id, e)}
+                        className="p-1 hover:bg-gray-100 rounded transition-colors"
+                        title={result.is_favorite ? "Remove from favorites" : "Mark as favorite"}
+                      >
+                        <Star
+                          className={`w-5 h-5 transition-colors ${
+                            result.is_favorite
+                              ? 'fill-yellow-400 text-yellow-400'
+                              : 'text-gray-300 hover:text-yellow-400'
+                          }`}
+                        />
+                      </button>
+                    </td>
                     {/* Training ID */}
                     <td className="px-4 py-3">
                       <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-gray-700">

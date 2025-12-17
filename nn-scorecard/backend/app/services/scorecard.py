@@ -331,34 +331,86 @@ class ScorecardGenerator:
         Returns:
             Tuple of (total_score, breakdown_by_feature)
         """
-        total_raw = 0.0
+        total_score = 0.0
         breakdown = {}
+        matched_features = 0
         
         for fs in scorecard.features:
             val = input_values.get(fs.feature_name)
             if val is None:
+                # Feature not provided - skip (contributes 0)
                 continue
             
-            # Find matching bin
+            # Find matching bin - try exact match first, then tolerance
             matched_bin = None
+            min_diff = float('inf')
+            closest_bin = None
+            
             for b in fs.bins:
-                if abs(b.input_value - val) < 0.01:
+                diff = abs(b.input_value - val)
+                if diff < 0.01:  # Exact match with tolerance
                     matched_bin = b
                     break
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_bin = b
             
             if matched_bin:
-                breakdown[fs.feature_name] = matched_bin.scaled_points
-                total_raw += matched_bin.raw_points
+                # scaled_points are already the final points to sum
+                points = matched_bin.scaled_points
+                breakdown[fs.feature_name] = int(round(points))
+                total_score += points
+                matched_features += 1
+            elif closest_bin and min_diff < 1.0:  # Close enough match (within 1.0)
+                # Use closest bin if very close
+                points = closest_bin.scaled_points
+                breakdown[fs.feature_name] = int(round(points))
+                total_score += points
+                matched_features += 1
             else:
-                # Value not in bins - calculate directly
-                # fs.weight is already adjusted for original scale
-                raw_pts = fs.weight * val
-                breakdown[fs.feature_name] = int(round(raw_pts * scorecard.scale_factor))
-                total_raw += raw_pts
+                # Value not in bins - interpolate between bins
+                if len(fs.bins) > 0:
+                    # Find the two bins this value falls between
+                    sorted_bins = sorted(fs.bins, key=lambda b: b.input_value)
+                    
+                    # Check if value is below minimum
+                    if val < sorted_bins[0].input_value:
+                        points = sorted_bins[0].scaled_points
+                    # Check if value is above maximum
+                    elif val > sorted_bins[-1].input_value:
+                        points = sorted_bins[-1].scaled_points
+                    else:
+                        # Find the two bins to interpolate between
+                        for i in range(len(sorted_bins) - 1):
+                            if sorted_bins[i].input_value <= val <= sorted_bins[i + 1].input_value:
+                                # Linear interpolation
+                                bin1 = sorted_bins[i]
+                                bin2 = sorted_bins[i + 1]
+                                if bin2.input_value != bin1.input_value:
+                                    ratio = (val - bin1.input_value) / (bin2.input_value - bin1.input_value)
+                                    points = bin1.scaled_points + ratio * (bin2.scaled_points - bin1.scaled_points)
+                                else:
+                                    points = bin1.scaled_points
+                                break
+                        else:
+                            # Fallback to first bin
+                            points = sorted_bins[0].scaled_points
+                else:
+                    # No bins available - use feature's min points
+                    points = fs.min_points
+                
+                breakdown[fs.feature_name] = int(round(points))
+                total_score += points
+                matched_features += 1
         
-        # Apply scaling and clamping
-        total_score = int(round(total_raw * scorecard.scale_factor + scorecard.offset))
+        # Clamp to valid range [0, 100]
+        # scaled_points are already in the 0-100 range, so just round and clamp
+        total_score = int(round(total_score))
         total_score = max(self.score_min, min(self.score_max, total_score))
+        
+        # Warn if no features matched
+        if matched_features == 0:
+            logger.warning(f"No features matched for scoring. Input features: {list(input_values.keys())}, Scorecard features: {[f.feature_name for f in scorecard.features]}")
         
         return total_score, breakdown
     

@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Download } from 'lucide-react';
 import { api } from '../services/api';
 import ScorecardDisplay from '../components/results/ScorecardDisplay';
 import ValidationMetrics from '../components/results/ValidationMetrics';
+import OutOfTimeValidation from '../components/results/OutOfTimeValidation';
 import { Scorecard } from '../types';
 
 // Transformation function to convert raw weights to percentages and translate points to 0-100 range
@@ -41,7 +42,7 @@ const transformScorecard = (rawScorecard: any): Scorecard => {
       // Normalize within feature's range (0 to 1), then scale by weight percentage
       // This maps the feature's raw point range to [0, weightPercent]
       const normalized = featureRange !== 0 ? (rawPoints - featureMin) / featureRange : 0.5;
-      const scaledPoints = Math.round(normalized * weightPercent * 10) / 10;
+      const scaledPoints = Math.round(normalized * weightPercent);
       
       return {
         ...b,
@@ -60,7 +61,7 @@ const transformScorecard = (rawScorecard: any): Scorecard => {
     
     return {
       feature_name: f.feature_name || f.name || `feature_${index}`,
-      weight: Math.round(weightPercent * 10) / 10,  // Percentage with 1 decimal
+      weight: Math.round(weightPercent),  // Percentage rounded to whole number
       weight_normalized: rawWeight,
       importance_rank: index + 1,
       min_points: scaledBinPoints.length > 0 ? Math.min(...scaledBinPoints) : 0,
@@ -140,7 +141,8 @@ const ScorecardView: React.FC = () => {
   const [validation, setValidation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'scorecard' | 'validation'>('scorecard');
+  const [activeTab, setActiveTab] = useState<'scorecard' | 'validation' | 'out-of-time'>('scorecard');
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -171,8 +173,8 @@ const ScorecardView: React.FC = () => {
           const resultsResponse = await api.getCompleteResults(jobId);
           console.log('Results response:', resultsResponse);
           
-          // Extract metrics from history if available
-          let metrics = {
+          // Extract metrics - prefer scorecard metrics if available and valid
+          let metrics = rawScorecard.metrics || {
             train_auc: 0,
             test_auc: 0,
             train_ar: 0,
@@ -181,34 +183,39 @@ const ScorecardView: React.FC = () => {
             test_ks: 0,
           };
           
-          if (resultsResponse.history && resultsResponse.history.epochs && resultsResponse.history.epochs.length > 0) {
-            // Get metrics from best epoch or last epoch
-            const bestEpochIdx = resultsResponse.history.best_epoch 
-              ? Math.min(resultsResponse.history.best_epoch - 1, resultsResponse.history.epochs.length - 1)
-              : resultsResponse.history.epochs.length - 1;
-            const bestEpoch = resultsResponse.history.epochs[bestEpochIdx];
-            
-            if (bestEpoch) {
+          // If scorecard metrics are zeros or missing, try to get from history
+          if (!metrics.train_auc || metrics.train_auc === 0) {
+            if (resultsResponse.history && resultsResponse.history.epochs && resultsResponse.history.epochs.length > 0) {
+              // Get metrics from best epoch or last epoch
+              const bestEpochIdx = resultsResponse.history.best_epoch 
+                ? Math.min(resultsResponse.history.best_epoch - 1, resultsResponse.history.epochs.length - 1)
+                : resultsResponse.history.epochs.length - 1;
+              const bestEpoch = resultsResponse.history.epochs[bestEpochIdx];
+              
+              if (bestEpoch) {
+                metrics = {
+                  train_auc: bestEpoch.train_auc || 0,
+                  test_auc: bestEpoch.test_auc || 0,
+                  train_ar: bestEpoch.train_ar || 0,
+                  test_ar: bestEpoch.test_ar || 0,
+                  train_ks: bestEpoch.train_ks || 0,
+                  test_ks: bestEpoch.test_ks || 0,
+                };
+              }
+            } else if (resultsResponse.metrics) {
+              // Fallback to test metrics only
               metrics = {
-                train_auc: bestEpoch.train_auc || 0,
-                test_auc: bestEpoch.test_auc || 0,
-                train_ar: bestEpoch.train_ar || 0,
-                test_ar: bestEpoch.test_ar || 0,
-                train_ks: bestEpoch.train_ks || 0,
-                test_ks: bestEpoch.test_ks || 0,
+                train_auc: resultsResponse.metrics.auc_roc || 0,
+                test_auc: resultsResponse.metrics.auc_roc || 0,
+                train_ar: resultsResponse.metrics.gini_ar || 0,
+                test_ar: resultsResponse.metrics.gini_ar || 0,
+                train_ks: resultsResponse.metrics.ks_statistic || 0,
+                test_ks: resultsResponse.metrics.ks_statistic || 0,
               };
             }
-          } else if (resultsResponse.metrics) {
-            // Fallback to test metrics only
-            metrics = {
-              train_auc: resultsResponse.metrics.auc_roc || 0,
-              test_auc: resultsResponse.metrics.auc_roc || 0,
-              train_ar: resultsResponse.metrics.gini_ar || 0,
-              test_ar: resultsResponse.metrics.gini_ar || 0,
-              train_ks: resultsResponse.metrics.ks_statistic || 0,
-              test_ks: resultsResponse.metrics.ks_statistic || 0,
-            };
           }
+          
+          console.log('[SCORECARD VIEW] Final metrics:', metrics);
           
           // TRANSFORM the scorecard - convert raw weights to percentages and translate points
           const transformedScorecard = transformScorecard({
@@ -269,6 +276,28 @@ const ScorecardView: React.FC = () => {
     fetchData();
   }, [jobId]);
 
+  const handleDownloadCSV = async () => {
+    if (!jobId) return;
+    
+    setDownloading(true);
+    try {
+      const blob = await api.downloadScorecardCSV(jobId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scorecard_${jobId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error('Failed to download CSV:', err);
+      alert(`Failed to download CSV: ${err.message || 'Unknown error'}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (error) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -303,12 +332,22 @@ const ScorecardView: React.FC = () => {
             Training ID: <code className="bg-gray-100 px-2 py-0.5 rounded">{jobId}</code>
           </p>
         </div>
-        <Link
-          to={`/results/${jobId}/config`}
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
-        >
-          View Config
-        </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={handleDownloadCSV}
+            disabled={downloading || !scorecard}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            {downloading ? 'Downloading...' : 'Download CSV'}
+          </button>
+          <Link
+            to={`/results/${jobId}/config`}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
+          >
+            View Config
+          </Link>
+        </div>
       </div>
 
       {/* Tab Navigation - ALWAYS VISIBLE */}
@@ -332,6 +371,16 @@ const ScorecardView: React.FC = () => {
           }`}
         >
           📈 Validation Metrics
+        </button>
+        <button
+          onClick={() => setActiveTab('out-of-time')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'out-of-time'
+              ? 'bg-white text-blue-600 shadow-sm'
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          🔍 Out-of-Time Validation
         </button>
       </div>
 
@@ -360,6 +409,10 @@ const ScorecardView: React.FC = () => {
                 Validation metrics not available for this training run.
               </div>
             )
+          )}
+          
+          {activeTab === 'out-of-time' && (
+            <OutOfTimeValidation jobId={jobId!} />
           )}
         </>
       )}

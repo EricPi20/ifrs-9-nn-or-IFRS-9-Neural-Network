@@ -1,6 +1,6 @@
 # backend/app/routers/training.py
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -10,6 +10,11 @@ import traceback
 import numpy as np
 import pandas as pd
 import hashlib
+import aiofiles
+import os
+from app.services.model_storage import ModelStorage
+from app.services.scorecard import ScorecardGenerator, Scorecard, FeatureScore, BinScore
+from app.core.constants import INPUT_SCALE_FACTOR
 from app.models.neural_network import (
     NeuralNetwork, calculate_auc, calculate_ks,
     generate_roc_curve, generate_score_histogram, generate_score_bands
@@ -19,6 +24,10 @@ router = APIRouter()
 
 # In-memory storage for training jobs
 training_jobs: Dict[str, Dict[str, Any]] = {}
+
+# Storage for out-of-time validation results
+storage = ModelStorage()
+generator = ScorecardGenerator(scale_factor=INPUT_SCALE_FACTOR)
 
 
 # === SCHEMAS ===
@@ -192,6 +201,306 @@ async def get_validation_metrics(job_id: str):
     return validation_data
 
 
+@router.post("/{job_id}/out-of-time-validation")
+async def upload_out_of_time_validation(job_id: str, file: UploadFile = File(...)):
+    """Upload CSV file for out-of-time validation and score all records."""
+    # Check if job exists in memory or storage
+    job = None
+    if job_id in training_jobs:
+        job = training_jobs[job_id]
+        if job.get('status') != 'completed':
+            raise HTTPException(status_code=400, detail="Training not completed")
+    else:
+        # Try loading from storage
+        if not storage.checkpoint_exists(job_id):
+            raise HTTPException(status_code=404, detail="Job not found")
+        # For storage-loaded jobs, we'll handle scorecard loading separately
+    
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+    
+    # Save uploaded file temporarily
+    temp_file_path = f"/tmp/oot_validation_{job_id}_{uuid.uuid4().hex[:8]}.csv"
+    try:
+        async with aiofiles.open(temp_file_path, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        # Read CSV
+        df = pd.read_csv(temp_file_path)
+        
+        # Get scorecard - try multiple locations and generate if needed
+        scorecard_data = None
+        
+        if job_id in training_jobs:
+            job = training_jobs[job_id]
+            print(f"[OOT VALIDATION] Job found in memory for {job_id}")
+            print(f"[OOT VALIDATION] Job keys: {list(job.keys())}")
+            
+            # Try multiple possible locations
+            if 'result' in job and isinstance(job['result'], dict):
+                scorecard_data = job['result'].get('scorecard')
+                print(f"[OOT VALIDATION] Checked job['result']['scorecard']: {scorecard_data is not None}")
+            
+            if not scorecard_data:
+                scorecard_data = job.get('scorecard')
+                print(f"[OOT VALIDATION] Checked job['scorecard']: {scorecard_data is not None}")
+            
+            # If not found, generate it
+            if not scorecard_data:
+                print(f"[OOT VALIDATION] Scorecard not found, generating for job {job_id}")
+                try:
+                    scorecard_data = generate_scorecard(job_id, job)
+                    training_jobs[job_id]['scorecard'] = scorecard_data
+                    print(f"[OOT VALIDATION] Successfully generated scorecard with {len(scorecard_data.get('features', []))} features")
+                except Exception as e:
+                    print(f"[OOT VALIDATION] Error generating scorecard: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise HTTPException(status_code=500, detail=f"Failed to generate scorecard: {str(e)}")
+        else:
+            # Try loading from storage
+            print(f"[OOT VALIDATION] Job not in memory, loading from storage for {job_id}")
+            try:
+                checkpoint = storage.load_checkpoint(job_id)
+                print(f"[OOT VALIDATION] Checkpoint loaded, metadata keys: {list(checkpoint.get('metadata', {}).keys())}")
+                
+                scorecard_data = (
+                    checkpoint['metadata'].get('scorecard_output') or
+                    checkpoint['metadata'].get('scorecard') or
+                    None
+                )
+                
+                if scorecard_data:
+                    print(f"[OOT VALIDATION] Scorecard found in storage with {len(scorecard_data.get('features', []))} features")
+                else:
+                    print(f"[OOT VALIDATION] Scorecard not found in checkpoint metadata")
+                    # Try to reconstruct job from checkpoint and generate scorecard
+                    metadata = checkpoint.get('metadata', {})
+                    if 'feature_names' in metadata and 'bin_stats' in metadata:
+                        print(f"[OOT VALIDATION] Attempting to reconstruct job from checkpoint")
+                        reconstructed_job = {
+                            'config': metadata.get('config', {}),
+                            'feature_names': metadata.get('feature_names', []),
+                            'bin_stats': metadata.get('bin_stats', {}),
+                            'feature_importance': metadata.get('feature_importance', []),
+                            'data_stats': metadata.get('data_stats', {}),
+                            'current_metrics': metadata.get('metrics', {}),
+                        }
+                        try:
+                            scorecard_data = generate_scorecard(job_id, reconstructed_job)
+                            print(f"[OOT VALIDATION] Successfully generated scorecard from checkpoint")
+                        except Exception as e:
+                            print(f"[OOT VALIDATION] Error generating scorecard from checkpoint: {e}")
+                            raise HTTPException(status_code=500, detail=f"Scorecard not found in stored model and could not be generated: {str(e)}")
+                    else:
+                        raise HTTPException(status_code=500, detail="Scorecard not found in stored model and insufficient data to generate it")
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="Job not found")
+        
+        if not scorecard_data:
+            raise HTTPException(status_code=500, detail="Scorecard not found in model and could not be generated")
+        
+        print(f"[OOT VALIDATION] Using scorecard with {len(scorecard_data.get('features', []))} features")
+        
+        # Reconstruct Scorecard object
+        features = []
+        for fd in scorecard_data.get('features', []):
+            bins = []
+            for b in fd.get('bins', []):
+                bins.append(BinScore(
+                    bin_index=b.get('bin_index', 0),
+                    input_value=b['input_value'],
+                    bin_label=b.get('bin_label', ''),
+                    raw_points=b.get('raw_points', 0.0),
+                    scaled_points=b['scaled_points'],
+                    count_train=b.get('count_train', 0),
+                    count_test=b.get('count_test', 0),
+                    bad_rate_train=b.get('bad_rate_train', 0.0),
+                    bad_rate_test=b.get('bad_rate_test', 0.0)
+                ))
+            features.append(FeatureScore(
+                feature_name=fd['feature_name'],
+                weight=fd['weight'],
+                weight_normalized=fd.get('weight_normalized', fd['weight']),
+                importance_rank=fd.get('importance_rank', 0),
+                bins=bins,
+                min_points=fd.get('min_points', 0),
+                max_points=fd.get('max_points', 0)
+            ))
+        
+        scorecard = Scorecard(
+            segment=scorecard_data.get('segment', ''),
+            model_type=scorecard_data.get('model_type', 'neural_network'),
+            scale_factor=scorecard_data.get('scale_factor', 1.0),
+            offset=scorecard_data.get('offset', 0.0),
+            input_scale_factor=scorecard_data.get('input_scale_factor', INPUT_SCALE_FACTOR),
+            features=features
+        )
+        
+        # Identify target column
+        from app.config import settings
+        target_col = settings.DEFAULT_TARGET_COLUMN
+        if target_col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Target column '{target_col}' not found in CSV")
+        
+        # Get feature columns (exclude target, segment, id)
+        exclude_cols = {target_col, settings.DEFAULT_SEGMENT_COLUMN, settings.DEFAULT_ID_COLUMN}
+        feature_cols = [c for c in df.columns if c not in exclude_cols]
+        
+        # Score all records
+        all_scores = []
+        y_true = []
+        
+        for idx, row in df.iterrows():
+            record = {col: float(row[col]) for col in feature_cols if pd.notna(row[col])}
+            total_score, _ = generator.calculate_score(scorecard, record)
+            all_scores.append(total_score)
+            y_true.append(int(row[target_col]))
+        
+        all_scores = np.array(all_scores)
+        y_true = np.array(y_true)
+        
+        # Generate validation data using the scored results
+        n_samples = len(y_true)
+        n_bad = int(np.sum(y_true))
+        n_good = n_samples - n_bad
+        bad_rate = n_bad / n_samples if n_samples > 0 else 0
+        
+        y_scores = all_scores / 100.0  # Normalize to 0-1 for ROC calculation
+        
+        # Generate histogram
+        bin_edges = np.arange(0, 105, 5)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        good_mask = (y_true == 0)
+        bad_mask = (y_true == 1)
+        good_scores_for_hist = all_scores[good_mask] if np.any(good_mask) else np.array([])
+        bad_scores_for_hist = all_scores[bad_mask] if np.any(bad_mask) else np.array([])
+        
+        good_hist, _ = np.histogram(good_scores_for_hist, bins=bin_edges) if len(good_scores_for_hist) > 0 else (np.zeros(len(bin_edges) - 1), None)
+        bad_hist, _ = np.histogram(bad_scores_for_hist, bins=bin_edges) if len(bad_scores_for_hist) > 0 else (np.zeros(len(bin_edges) - 1), None)
+        total_hist = good_hist + bad_hist
+        bad_rates = np.where(total_hist > 0, bad_hist / total_hist * 100, 0)
+        
+        histogram = {
+            'bin_edges': bin_edges.tolist(),
+            'bin_centers': bin_centers.tolist(),
+            'bin_labels': [f'{int(bin_edges[i])}-{int(bin_edges[i+1])}' for i in range(len(bin_edges)-1)],
+            'good_counts': good_hist.tolist(),
+            'bad_counts': bad_hist.tolist(),
+            'total_counts': total_hist.tolist(),
+            'bad_rate': bad_rates.tolist(),
+        }
+        
+        # Generate ROC curve
+        y_pred_bad = 1 - y_scores
+        sorted_idx = np.argsort(-y_pred_bad)
+        y_sorted = y_true[sorted_idx]
+        
+        n_points = 100
+        tpr_list = [0]
+        fpr_list = [0]
+        
+        for i in range(1, n_points + 1):
+            threshold_idx = int(i * n_samples / n_points)
+            if threshold_idx > n_samples:
+                threshold_idx = n_samples
+            
+            tp = np.sum(y_sorted[:threshold_idx])
+            fp = threshold_idx - tp
+            
+            tpr = tp / n_bad if n_bad > 0 else 0
+            fpr = fp / n_good if n_good > 0 else 0
+            
+            tpr_list.append(tpr * 100)
+            fpr_list.append(fpr * 100)
+        
+        diagonal = np.linspace(0, 100, len(fpr_list)).tolist()
+        
+        # Calculate AUC
+        fpr_arr = np.array(fpr_list) / 100
+        tpr_arr = np.array(tpr_list) / 100
+        computed_auc = float(np.trapz(tpr_arr, fpr_arr))
+        
+        roc_curve_data = {
+            'fpr': fpr_list,
+            'tpr': tpr_list,
+            'diagonal': diagonal,
+            'auc': round(computed_auc, 4),
+        }
+        
+        # Calculate AR (Gini)
+        ar = computed_auc * 2 - 1
+        
+        # Score bands
+        score_bands = []
+        for low, high in [(0, 20), (20, 40), (40, 60), (60, 80), (80, 100)]:
+            mask = (all_scores >= low) & (all_scores < high) if high < 100 else (all_scores >= low) & (all_scores <= high)
+            g = int(np.sum((1 - y_true)[mask]))
+            b = int(np.sum(y_true[mask]))
+            total = g + b
+            score_bands.append({
+                'range': f'{low}-{high}',
+                'low': low,
+                'high': high,
+                'total': total,
+                'good': g,
+                'bad': b,
+                'bad_rate': round(b / total * 100, 2) if total > 0 else 0,
+                'pct_total': round(total / n_samples * 100, 2),
+            })
+        
+        # Prepare response
+        validation_data = {
+            'histogram': histogram,
+            'roc_curve': roc_curve_data,
+            'metrics': {
+                'auc': round(computed_auc, 4),
+                'ar': round(ar, 4),
+                'n_samples': n_samples,
+                'n_good': n_good,
+                'n_bad': n_bad,
+                'bad_rate': round(bad_rate * 100, 2),
+            },
+            'score_bands': score_bands,
+            'filename': file.filename,
+            'uploaded_at': datetime.now().isoformat(),
+        }
+        
+        # Store results
+        if job_id not in training_jobs:
+            training_jobs[job_id] = {}
+        training_jobs[job_id]['out_of_time_validation'] = validation_data
+        
+        return validation_data
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to process out-of-time validation: {str(e)}")
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
+
+
+@router.get("/{job_id}/out-of-time-validation")
+async def get_out_of_time_validation(job_id: str):
+    """Get saved out-of-time validation results."""
+    if job_id not in training_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    validation_data = training_jobs[job_id].get('out_of_time_validation')
+    if not validation_data:
+        raise HTTPException(status_code=404, detail="Out-of-time validation results not found")
+    
+    return validation_data
+
+
 @router.get("/{job_id}/results")
 async def get_complete_results(job_id: str):
     """Get complete results including scorecard and validation data."""
@@ -243,6 +552,36 @@ def generate_scorecard(job_id: str, job: dict) -> dict:
     """Generate scorecard using real bin statistics from training."""
     config = job.get('config', {})
     metrics = job.get('current_metrics', {})
+    
+    print(f"[SCORECARD] Initial metrics from current_metrics: {metrics}")
+    
+    # If metrics are missing, incomplete, or zero, try to get from history
+    if not metrics or not metrics.get('train_auc') or metrics.get('train_auc', 0) == 0:
+        history = job.get('history', [])
+        print(f"[SCORECARD] Metrics incomplete or zero, checking history. History length: {len(history)}")
+        if history and len(history) > 0:
+            # Get the last epoch's metrics (final metrics)
+            last_epoch = history[-1]
+            print(f"[SCORECARD] Last epoch metrics: {last_epoch}")
+            if isinstance(last_epoch, dict):
+                # Extract metrics from last epoch
+                extracted_metrics = {
+                    'train_auc': last_epoch.get('train_auc', 0),
+                    'test_auc': last_epoch.get('test_auc', 0),
+                    'train_ar': last_epoch.get('train_ar', 0),
+                    'test_ar': last_epoch.get('test_ar', 0),
+                    'train_ks': last_epoch.get('train_ks', 0),
+                    'test_ks': last_epoch.get('test_ks', 0),
+                }
+                # Only use extracted metrics if they're non-zero
+                if extracted_metrics.get('train_auc', 0) > 0:
+                    metrics = extracted_metrics
+                    print(f"[SCORECARD] Using metrics from history: {metrics}")
+                else:
+                    print(f"[SCORECARD] History metrics also zero, using defaults")
+    
+    print(f"[SCORECARD] Final metrics to use: {metrics}")
+    
     bin_stats = job.get('bin_stats')
     feature_names = job.get('feature_names', [])
     data_stats = job.get('data_stats', {})
@@ -361,7 +700,7 @@ def generate_scorecard(job_id: str, job: dict) -> dict:
                 else:
                     normalized_pos = 0.5
                 
-                scaled_points = round(normalized_pos * weight_pct, 1)
+                scaled_points = round(normalized_pos * weight_pct)
                 
                 bins.append({
                     'bin_index': j,
@@ -386,7 +725,7 @@ def generate_scorecard(job_id: str, job: dict) -> dict:
                     'bin_label': str(j + 1),
                     'input_value': float(-60 + j * 32.5),
                     'raw_points': float(weight_raw * (-60 + j * 32.5)),
-                    'scaled_points': round(j * weight_pct / 4, 1),
+                    'scaled_points': round(j * weight_pct / 4),
                     'count_train': 500,
                     'count_test': 150,
                     'bad_rate_train': round(30 - j * 6, 1),
@@ -397,7 +736,7 @@ def generate_scorecard(job_id: str, job: dict) -> dict:
         
         feature_data.append({
             'feature_name': feat_name,
-            'weight': round(weight_pct, 1),
+            'weight': round(weight_pct),
             'weight_normalized': round(weight_raw, 6),
             'importance_rank': i + 1,
             'min_points': min(scaled_points_list),

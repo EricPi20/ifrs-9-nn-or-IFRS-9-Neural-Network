@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Copy, Check, Download } from 'lucide-react';
 import { getResult } from '../stores/resultsStore';
 import { api } from '../services/api';
 
@@ -12,6 +12,7 @@ const ConfigView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -52,6 +53,28 @@ const ConfigView: React.FC = () => {
       navigator.clipboard.writeText(JSON.stringify(config.config, null, 2));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownloadCSV = async () => {
+    if (!jobId) return;
+    
+    setDownloading(true);
+    try {
+      const blob = await api.downloadConfigCSV(jobId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `config_${jobId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error('Failed to download CSV:', err);
+      alert(`Failed to download CSV: ${err.message || 'Unknown error'}`);
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -101,12 +124,22 @@ const ConfigView: React.FC = () => {
             Training ID: <code className="bg-gray-100 px-2 py-0.5 rounded">{jobId}</code>
           </p>
         </div>
-        <Link
-          to={`/results/${jobId}/scorecard`}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-        >
-          View Scorecard
-        </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={handleDownloadCSV}
+            disabled={downloading || !config}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <Download className="w-4 h-4" />
+            {downloading ? 'Downloading...' : 'Download CSV'}
+          </button>
+          <Link
+            to={`/results/${jobId}/scorecard`}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+          >
+            View Scorecard
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

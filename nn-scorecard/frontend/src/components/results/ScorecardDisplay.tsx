@@ -124,15 +124,15 @@ export const ScorecardDisplay: React.FC<ScorecardDisplayProps> = ({
             </p>
           </div>
           <div className="bg-gray-100 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Test AUC</p>
+            <p className="text-sm text-gray-500">Train AUC</p>
             <p className="text-2xl font-bold text-[#1E3A5F]">
-              {scorecard.metrics.test_auc.toFixed(4)}
+              {scorecard.metrics.train_auc.toFixed(4)}
             </p>
           </div>
           <div className="bg-gray-100 rounded-lg p-4">
-            <p className="text-sm text-gray-500">Test AR (Gini)</p>
+            <p className="text-sm text-gray-500">Train AR (Gini)</p>
             <p className="text-2xl font-bold text-[#1E3A5F]">
-              {scorecard.metrics.test_ar.toFixed(4)}
+              {scorecard.metrics.train_ar.toFixed(4)}
             </p>
           </div>
         </div>
@@ -275,11 +275,11 @@ export const ScorecardDisplay: React.FC<ScorecardDisplayProps> = ({
                 </div>
                 {/* Weight as percentage */}
                 <div className="w-20 text-right font-mono text-sm font-semibold text-[#1E3A5F]">
-                  {feature.weight.toFixed(1)}%
+                  {Math.round(feature.weight)}%
                 </div>
                 {/* Point range - all positive now */}
                 <div className="w-24 text-right text-sm text-gray-500">
-                  [{feature.min_points} - {feature.max_points}]
+                  [{Math.round(feature.min_points)} - {Math.round(feature.max_points)}]
                 </div>
               </div>
             );
@@ -384,7 +384,7 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
           <div className="text-left">
             <p className="font-semibold text-[#1E3A5F]">{feature.feature_name}</p>
             <p className="text-sm text-gray-500">
-              {feature.bins.length} bins • Weight: <span className="font-semibold">{feature.weight.toFixed(1)}%</span>
+              {feature.bins.length} bins • Weight: <span className="font-semibold">{Math.round(feature.weight)}%</span>
             </p>
           </div>
         </div>
@@ -393,9 +393,9 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
           <div className="text-right">
             <p className="text-sm text-gray-500">Point Range</p>
             <p className="font-mono font-medium">
-              <span className="text-gray-600">{feature.min_points}</span>
+              <span className="text-gray-600">{Math.round(feature.min_points)}</span>
               {' to '}
-              <span className="text-green-600">{feature.max_points}</span>
+              <span className="text-green-600">{Math.round(feature.max_points)}</span>
             </p>
           </div>
           <svg 
@@ -445,7 +445,7 @@ const FeatureCard: React.FC<FeatureCardProps> = ({
                     <td className="py-3 px-3 text-right">
                       <span className={`inline-block px-3 py-1 rounded-full font-bold font-mono
                                        ${getPointsColor(bin.scaled_points)}`}>
-                        {bin.scaled_points}
+                        {Math.round(bin.scaled_points)}
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right">
