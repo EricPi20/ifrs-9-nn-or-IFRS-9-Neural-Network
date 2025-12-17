@@ -1,0 +1,121 @@
+{
+  "file": "data/uploads/020da82b-f70e-4a6a-928b-11338384faf0.csv",
+  "validation_passed": true,
+  "segment_stats": [
+    {
+      "segment": "ALL",
+      "expected_records": 10000,
+      "actual_records": 10000,
+      "expected_bads": 1269,
+      "actual_bads": 1269,
+      "expected_bad_rate": 0.127,
+      "actual_bad_rate": 0.1269,
+      "match": true
+    },
+    {
+      "segment": "CONSUMER",
+      "expected_records": 8000,
+      "actual_records": 8000,
+      "expected_bads": 1009,
+      "actual_bads": 1009,
+      "expected_bad_rate": 0.126,
+      "actual_bad_rate": 0.1261,
+      "match": true
+    },
+    {
+      "segment": "ENTERPRISE",
+      "expected_records": 500,
+      "actual_records": 500,
+      "expected_bads": 50,
+      "actual_bads": 50,
+      "expected_bad_rate": 0.1,
+      "actual_bad_rate": 0.1,
+      "match": true
+    },
+    {
+      "segment": "SME",
+      "expected_records": 1500,
+      "actual_records": 1500,
+      "expected_bads": 210,
+      "actual_bads": 210,
+      "expected_bad_rate": 0.14,
+      "actual_bad_rate": 0.14,
+      "match": true
+    }
+  ],
+  "feature_stats": [
+    {
+      "feature": "payment_history",
+      "expected_bins": 5,
+      "actual_bins": 5,
+      "expected_min": -60,
+      "actual_min": -60,
+      "expected_max": 75,
+      "actual_max": 75,
+      "expected_correlation": -0.114,
+      "actual_correlation": -0.114,
+      "match": true
+    },
+    {
+      "feature": "credit_utilization",
+      "expected_bins": 5,
+      "actual_bins": 5,
+      "expected_min": -55,
+      "actual_min": -55,
+      "expected_max": 65,
+      "actual_max": 65,
+      "expected_correlation": -0.059,
+      "actual_correlation": -0.059,
+      "match": true
+    },
+    {
+      "feature": "account_tenure",
+      "expected_bins": 5,
+      "actual_bins": 5,
+      "expected_min": -50,
+      "actual_min": -50,
+      "expected_max": 55,
+      "actual_max": 55,
+      "expected_correlation": -0.033,
+      "actual_correlation": -0.033,
+      "match": true
+    },
+    {
+      "feature": "monthly_income",
+      "expected_bins": 5,
+      "actual_bins": 5,
+      "expected_min": -45,
+      "actual_min": -45,
+      "expected_max": 60,
+      "actual_max": 60,
+      "expected_correlation": -0.025,
+      "actual_correlation": -0.025,
+      "match": true
+    },
+    {
+      "feature": "num_credit_lines",
+      "expected_bins": 4,
+      "actual_bins": 4,
+      "expected_min": -40,
+      "actual_min": -40,
+      "expected_max": 40,
+      "actual_max": 40,
+      "expected_correlation": -0.009,
+      "actual_correlation": -0.009,
+      "match": true
+    },
+    {
+      "feature": "recent_inquiries",
+      "expected_bins": 4,
+      "actual_bins": 4,
+      "expected_min": -45,
+      "actual_min": -45,
+      "expected_max": 45,
+      "actual_max": 45,
+      "expected_correlation": -0.024,
+      "actual_correlation": -0.024,
+      "match": true
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,971 @@
+# Neural Network Scorecard Web Application - Cursor Development Rules
+# Project: RIFT NN-Scorecard Module
+# Brand: RIFT (Risk Intelligence & Finance Technology)
+# Author: Risk Intelligence & Finance Technology Team, Globe Telecom
+# Version: 4.0 - Complete with RIFT Branding
+
+## Project Overview
+
+This project implements a **Neural Network-based Credit Scorecard** module as part of the 
+**RIFT (Risk Intelligence & Finance Technology)** platform. RIFT is Globe Telecom's 
+internal platform for credit risk model development, validation, and monitoring.
+
+### Key Specifications
+- **Input Data**: Pre-binned (2-6 bins per feature) and WoE-transformed (normalized log odds)
+- **Output Score**: Scaled 0-100 where **100 = Best (lowest risk)**
+- **Segmentation**: Portfolio has segments; train separate scorecards per segment
+- **Optimization**: Maximize AR (Accuracy Ratio / Gini) using differentiable surrogates
+- **Documentation**: Save ALL hyperparameters and training metrics as model metadata
+- **Data Split**: **TRAIN/TEST ONLY** (no validation set)
+- **Architecture**: **Fully configurable** - number of hidden layers AND neurons per layer
+- **Branding**: RIFT logo, color scheme, and design language
+
+---
+
+## RIFT Branding Guidelines
+
+### Brand Identity
+- **Name**: RIFT - Risk Intelligence & Finance Technology
+- **Tagline**: "Intelligent Risk, Smarter Decisions"
+- **Logo**: Stylized "RIFT" wordmark with data/wave motif
+
+### Color Palette
+
+```css
+:root {
+  /* Primary Colors */
+  --rift-primary: #1E3A5F;        /* Deep Navy Blue - Main brand color */
+  --rift-primary-light: #2C5282;  /* Lighter navy for hover states */
+  --rift-primary-dark: #1A202C;   /* Darker navy for headers */
+  
+  /* Secondary Colors */
+  --rift-secondary: #38B2AC;      /* Teal - Accent color */
+  --rift-secondary-light: #4FD1C5;
+  --rift-secondary-dark: #319795;
+  
+  /* Accent Colors */
+  --rift-accent-gold: #D69E2E;    /* Gold - For highlights, warnings */
+  --rift-accent-green: #48BB78;   /* Green - Success, good scores */
+  --rift-accent-red: #F56565;     /* Red - Errors, bad scores */
+  --rift-accent-orange: #ED8936;  /* Orange - Warnings */
+  
+  /* Neutral Colors */
+  --rift-gray-50: #F7FAFC;        /* Background light */
+  --rift-gray-100: #EDF2F7;       /* Card backgrounds */
+  --rift-gray-200: #E2E8F0;       /* Borders */
+  --rift-gray-300: #CBD5E0;       /* Disabled states */
+  --rift-gray-600: #718096;       /* Secondary text */
+  --rift-gray-800: #2D3748;       /* Primary text */
+  --rift-gray-900: #1A202C;       /* Headings */
+  
+  /* Score Colors (0-100 scale) */
+  --score-excellent: #48BB78;     /* 80-100: Excellent */
+  --score-good: #68D391;          /* 60-79: Good */
+  --score-fair: #ECC94B;          /* 40-59: Fair */
+  --score-poor: #ED8936;          /* 20-39: Poor */
+  --score-very-poor: #F56565;     /* 0-19: Very Poor */
+}
+```
+
+### Typography
+
+```css
+/* Fonts */
+--font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+--font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+/* Font Sizes */
+--text-xs: 0.75rem;    /* 12px - Small labels */
+--text-sm: 0.875rem;   /* 14px - Body small */
+--text-base: 1rem;     /* 16px - Body */
+--text-lg: 1.125rem;   /* 18px - Large body */
+--text-xl: 1.25rem;    /* 20px - Subheadings */
+--text-2xl: 1.5rem;    /* 24px - Section headers */
+--text-3xl: 1.875rem;  /* 30px - Page titles */
+--text-4xl: 2.25rem;   /* 36px - Hero text */
+```
+
+### RIFT Logo Component
+
+```tsx
+// frontend/src/components/common/RIFTLogo.tsx
+
+import React from 'react';
+
+interface RIFTLogoProps {
+  size?: 'sm' | 'md' | 'lg';
+  variant?: 'full' | 'icon' | 'wordmark';
+  className?: string;
+}
+
+export const RIFTLogo: React.FC<RIFTLogoProps> = ({ 
+  size = 'md', 
+  variant = 'full',
+  className = '' 
+}) => {
+  const sizeClasses = {
+    sm: 'h-8',
+    md: 'h-10',
+    lg: 'h-14'
+  };
+
+  return (
+    <div className={`flex items-center gap-2 ${className}`}>
+      {/* Icon - Stylized R with data waves */}
+      {(variant === 'full' || variant === 'icon') && (
+        <svg 
+          className={sizeClasses[size]} 
+          viewBox="0 0 48 48" 
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          {/* Background circle */}
+          <circle cx="24" cy="24" r="22" fill="#1E3A5F"/>
+          
+          {/* Stylized R */}
+          <path 
+            d="M16 12h10c4.418 0 8 3.582 8 8s-3.582 8-8 8h-6l8 8" 
+            stroke="#38B2AC" 
+            strokeWidth="3" 
+            strokeLinecap="round" 
+            strokeLinejoin="round"
+            fill="none"
+          />
+          
+          {/* Data wave lines */}
+          <path 
+            d="M32 18c2-2 4-2 6 0" 
+            stroke="#4FD1C5" 
+            strokeWidth="2" 
+            strokeLinecap="round"
+          />
+          <path 
+            d="M32 24c2-2 4-2 6 0" 
+            stroke="#4FD1C5" 
+            strokeWidth="2" 
+            strokeLinecap="round"
+          />
+          <path 
+            d="M32 30c2-2 4-2 6 0" 
+            stroke="#4FD1C5" 
+            strokeWidth="2" 
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+      
+      {/* Wordmark */}
+      {(variant === 'full' || variant === 'wordmark') && (
+        <div className="flex flex-col">
+          <span 
+            className={`font-bold tracking-wider ${
+              size === 'sm' ? 'text-lg' : size === 'md' ? 'text-xl' : 'text-2xl'
+            }`}
+            style={{ color: '#1E3A5F' }}
+          >
+            RIFT
+          </span>
+          {size !== 'sm' && (
+            <span 
+              className="text-xs tracking-wide"
+              style={{ color: '#718096' }}
+            >
+              Risk Intelligence & Finance Technology
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+```
+
+### UI Component Styling
+
+```tsx
+// Tailwind config extending with RIFT theme
+// frontend/tailwind.config.js
+
+module.exports = {
+  content: ['./src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        rift: {
+          primary: '#1E3A5F',
+          'primary-light': '#2C5282',
+          'primary-dark': '#1A202C',
+          secondary: '#38B2AC',
+          'secondary-light': '#4FD1C5',
+          'secondary-dark': '#319795',
+          gold: '#D69E2E',
+          success: '#48BB78',
+          error: '#F56565',
+          warning: '#ED8936',
+        },
+        score: {
+          excellent: '#48BB78',
+          good: '#68D391',
+          fair: '#ECC94B',
+          poor: '#ED8936',
+          'very-poor': '#F56565',
+        }
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+    },
+  },
+  plugins: [],
+};
+```
+
+---
+
+## Complete Hyperparameter Output Specification
+
+### Model Metadata Structure
+
+The saved model checkpoint MUST include ALL hyperparameters for full reproducibility
+and IFRS9 documentation requirements.
+
+```python
+@dataclass
+class CompleteModelMetadata:
+    """
+    Complete model metadata including ALL hyperparameters.
+    
+    This structure is saved with every trained model and exported
+    in documentation for regulatory compliance.
+    """
+    
+    # === IDENTIFICATION ===
+    model_id: str                       # UUID
+    model_name: str                     # User-defined name
+    created_at: str                     # ISO timestamp
+    created_by: str                     # Username
+    segment: str                        # Portfolio segment trained on
+    
+    # === DATA INFORMATION ===
+    data_info: DataInfo
+    
+    # === NEURAL NETWORK ARCHITECTURE ===
+    architecture: ArchitectureConfig
+    
+    # === REGULARIZATION ===
+    regularization: RegularizationConfig
+    
+    # === LOSS FUNCTION ===
+    loss_config: LossConfig
+    
+    # === OPTIMIZER ===
+    optimizer_config: OptimizerConfig
+    
+    # === TRAINING ===
+    training_config: TrainingConfig
+    
+    # === SCORECARD SCALING ===
+    scorecard_config: ScorecardConfig
+    
+    # === TRAINING RESULTS ===
+    training_history: TrainingHistory
+    final_metrics: FinalMetrics
+    
+    # === SCORECARD OUTPUT ===
+    scorecard: ScorecardOutput
+
+
+@dataclass
+class DataInfo:
+    """Information about training data."""
+    file_id: str
+    filename: str
+    total_records: int
+    train_records: int
+    test_records: int
+    test_size: float                    # e.g., 0.30
+    random_state: int
+    n_features: int
+    feature_names: List[str]
+    target_column: str
+    segment_column: str
+    train_bad_rate: float
+    test_bad_rate: float
+
+
+@dataclass
+class ArchitectureConfig:
+    """Neural network architecture hyperparameters."""
+    model_type: str                     # 'linear' or 'neural_network'
+    input_dim: int                      # Number of input features
+    hidden_layers: List[int]            # Neurons per layer, e.g., [64, 32, 16]
+    num_hidden_layers: int              # len(hidden_layers)
+    total_neurons: int                  # sum(hidden_layers)
+    activation_function: str            # 'relu', 'leaky_relu', 'elu', 'selu', 'tanh'
+    use_batch_normalization: bool
+    output_activation: str              # 'sigmoid' for binary classification
+    total_parameters: int               # Total trainable parameters
+    trainable_parameters: int
+
+
+@dataclass
+class RegularizationConfig:
+    """Regularization hyperparameters."""
+    dropout_rate: float                 # 0.0 to 0.5
+    l1_lambda: float                    # L1 (Lasso) regularization strength
+    l2_lambda: float                    # L2 (Ridge) regularization strength
+    weight_decay: float                 # AdamW weight decay (if used)
+    gradient_clip_norm: float           # Gradient clipping threshold
+    early_stopping_patience: int        # Epochs before early stopping
+
+
+@dataclass
+class LossConfig:
+    """Loss function hyperparameters."""
+    loss_type: str                      # 'bce', 'pairwise_auc', 'soft_auc', 'wmw', 'combined'
+    # For combined loss
+    bce_weight: float                   # Alpha - weight for BCE component
+    auc_weight: float                   # (1 - Alpha) - weight for AUC component
+    auc_surrogate_type: str             # 'pairwise', 'soft', 'wmw'
+    soft_auc_gamma: float               # Gamma for soft AUC
+    wmw_margin: float                   # Margin for WMW loss
+    wmw_power: float                    # Power for WMW loss
+    # For class imbalance
+    use_class_weights: bool
+    class_weight_ratio: float           # Negative/Positive ratio if used
+
+
+@dataclass
+class OptimizerConfig:
+    """Optimizer hyperparameters."""
+    optimizer_type: str                 # 'adam', 'adamw', 'sgd', 'rmsprop'
+    learning_rate: float                # Initial learning rate
+    # Adam/AdamW specific
+    beta1: float                        # Default: 0.9
+    beta2: float                        # Default: 0.999
+    epsilon: float                      # Default: 1e-8
+    amsgrad: bool                       # Use AMSGrad variant
+    # SGD specific
+    momentum: float                     # Default: 0.9
+    nesterov: bool                      # Use Nesterov momentum
+    # Learning rate scheduling
+    lr_scheduler: str                   # 'none', 'plateau', 'step', 'cosine', 'exponential'
+    lr_scheduler_patience: int          # For ReduceLROnPlateau
+    lr_scheduler_factor: float          # Factor to reduce LR
+    lr_scheduler_min_lr: float          # Minimum learning rate
+
+
+@dataclass
+class TrainingConfig:
+    """Training process hyperparameters."""
+    batch_size: int
+    max_epochs: int
+    actual_epochs_trained: int          # How many epochs actually ran
+    early_stopping_triggered: bool
+    early_stopping_epoch: Optional[int] # Epoch where training stopped
+    shuffle_training_data: bool
+    random_state: int
+    device: str                         # 'cpu' or 'cuda'
+    mixed_precision: bool               # Use FP16 training
+
+
+@dataclass
+class ScorecardConfig:
+    """Scorecard scaling hyperparameters."""
+    score_min: int                      # 0
+    score_max: int                      # 100
+    score_direction: str                # 'higher_is_better'
+    scaling_method: str                 # 'linear' or 'log_odds'
+
+
+@dataclass
+class TrainingHistory:
+    """Complete training history per epoch."""
+    epochs: List[int]
+    train_loss: List[float]
+    test_loss: List[float]
+    train_bce_loss: List[float]         # BCE component (if combined)
+    train_auc_loss: List[float]         # AUC component (if combined)
+    train_auc: List[float]
+    test_auc: List[float]
+    train_ar: List[float]               # Gini = 2*AUC - 1
+    test_ar: List[float]
+    train_ks: List[float]
+    test_ks: List[float]
+    learning_rates: List[float]         # LR per epoch
+    epoch_duration_seconds: List[float]
+    best_epoch: int
+    total_training_time_seconds: float
+
+
+@dataclass
+class FinalMetrics:
+    """Final model performance on test set."""
+    # Discrimination metrics
+    auc_roc: float
+    gini_ar: float                      # = 2*AUC - 1
+    ks_statistic: float
+    ks_decile: int                      # Decile where KS occurs
+    
+    # Calibration metrics
+    log_loss: float
+    brier_score: float
+    
+    # Classification metrics (at 0.5 threshold)
+    accuracy: float
+    precision: float
+    recall: float
+    f1_score: float
+    
+    # Confusion matrix
+    true_positives: int
+    true_negatives: int
+    false_positives: int
+    false_negatives: int
+    
+    # Additional metrics
+    bad_capture_rate_top_10pct: float
+    bad_capture_rate_top_20pct: float
+    lift_top_decile: float
+
+
+@dataclass
+class ScorecardOutput:
+    """Final scorecard with all points."""
+    base_points: int
+    features: List[FeatureScorecard]
+    min_possible_score: int
+    max_possible_score: int
+    score_at_population_average: int
+    
+@dataclass
+class FeatureScorecard:
+    """Scorecard for a single feature."""
+    feature_name: str
+    model_weight: float                 # Raw neural network weight
+    bins: List[BinPoints]
+    
+@dataclass
+class BinPoints:
+    """Points for a single bin."""
+    bin_label: str                      # e.g., 'Very Poor (<500)'
+    woe_value: float
+    count_train: int                    # Records in train set
+    count_test: int                     # Records in test set
+    bad_rate_train: float
+    bad_rate_test: float
+    points: int                         # Scorecard points
+```
+
+### Model Checkpoint Save Function
+
+```python
+def save_model_checkpoint(
+    model: nn.Module,
+    metadata: CompleteModelMetadata,
+    filepath: str
+) -> None:
+    """
+    Save model with complete hyperparameter metadata.
+    
+    The checkpoint includes EVERYTHING needed to:
+    1. Reproduce the training
+    2. Document for regulatory compliance (IFRS9)
+    3. Load and use the model for scoring
+    """
+    checkpoint = {
+        # === Model State ===
+        'model_state_dict': model.state_dict(),
+        
+        # === Complete Metadata ===
+        'metadata': asdict(metadata),
+        
+        # === Quick Access Fields ===
+        'model_id': metadata.model_id,
+        'segment': metadata.segment,
+        'created_at': metadata.created_at,
+        
+        # === Version Info ===
+        'rift_version': '4.0',
+        'pytorch_version': torch.__version__,
+        'python_version': sys.version,
+    }
+    
+    torch.save(checkpoint, filepath)
+    
+    # Also save JSON metadata for easy access
+    json_path = filepath.replace('.pt', '_metadata.json')
+    with open(json_path, 'w') as f:
+        json.dump(asdict(metadata), f, indent=2, default=str)
+```
+
+### Export Training Report (Excel)
+
+```python
+def export_training_report_excel(
+    metadata: CompleteModelMetadata,
+    output_path: str
+) -> None:
+    """
+    Export comprehensive training report to Excel.
+    
+    Sheets:
+    1. Summary - Key metrics and configuration
+    2. Architecture - Neural network structure
+    3. Hyperparameters - All training parameters
+    4. Training History - Epoch-by-epoch metrics
+    5. Final Metrics - Test set performance
+    6. Scorecard - Complete scorecard table
+    7. Feature Analysis - Feature statistics
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Fill, Alignment, Border
+    
+    wb = Workbook()
+    
+    # === Sheet 1: Summary ===
+    ws_summary = wb.active
+    ws_summary.title = "Summary"
+    
+    # RIFT Header
+    ws_summary['A1'] = "RIFT - Neural Network Scorecard Report"
+    ws_summary['A1'].font = Font(size=16, bold=True, color="1E3A5F")
+    ws_summary['A2'] = "Risk Intelligence & Finance Technology"
+    ws_summary['A2'].font = Font(size=10, color="718096")
+    
+    ws_summary['A4'] = "Model Information"
+    ws_summary['A4'].font = Font(bold=True)
+    summary_rows = [
+        ('Model ID', metadata.model_id),
+        ('Segment', metadata.segment),
+        ('Created At', metadata.created_at),
+        ('', ''),
+        ('Data', ''),
+        ('Total Records', metadata.data_info.total_records),
+        ('Train Records', metadata.data_info.train_records),
+        ('Test Records', metadata.data_info.test_records),
+        ('Test Size', f"{metadata.data_info.test_size:.0%}"),
+        ('Features', metadata.data_info.n_features),
+        ('', ''),
+        ('Performance (Test Set)', ''),
+        ('AUC-ROC', f"{metadata.final_metrics.auc_roc:.4f}"),
+        ('Gini/AR', f"{metadata.final_metrics.gini_ar:.4f}"),
+        ('KS Statistic', f"{metadata.final_metrics.ks_statistic:.4f}"),
+    ]
+    for i, (label, value) in enumerate(summary_rows, start=5):
+        ws_summary[f'A{i}'] = label
+        ws_summary[f'B{i}'] = value
+    
+    # === Sheet 2: Architecture ===
+    ws_arch = wb.create_sheet("Architecture")
+    ws_arch['A1'] = "Neural Network Architecture"
+    ws_arch['A1'].font = Font(bold=True)
+    
+    arch = metadata.architecture
+    arch_rows = [
+        ('Model Type', arch.model_type),
+        ('Input Dimension', arch.input_dim),
+        ('Hidden Layers', str(arch.hidden_layers)),
+        ('Number of Hidden Layers', arch.num_hidden_layers),
+        ('Total Hidden Neurons', arch.total_neurons),
+        ('Activation Function', arch.activation_function),
+        ('Batch Normalization', 'Yes' if arch.use_batch_normalization else 'No'),
+        ('Output Activation', arch.output_activation),
+        ('Total Parameters', f"{arch.total_parameters:,}"),
+        ('Trainable Parameters', f"{arch.trainable_parameters:,}"),
+    ]
+    for i, (label, value) in enumerate(arch_rows, start=3):
+        ws_arch[f'A{i}'] = label
+        ws_arch[f'B{i}'] = value
+    
+    # === Sheet 3: Hyperparameters ===
+    ws_hyper = wb.create_sheet("Hyperparameters")
+    ws_hyper['A1'] = "Complete Hyperparameter Configuration"
+    ws_hyper['A1'].font = Font(bold=True)
+    
+    row = 3
+    
+    # Regularization
+    ws_hyper[f'A{row}'] = "REGULARIZATION"
+    ws_hyper[f'A{row}'].font = Font(bold=True)
+    row += 1
+    reg = metadata.regularization
+    for label, value in [
+        ('Dropout Rate', reg.dropout_rate),
+        ('L1 Lambda (Lasso)', reg.l1_lambda),
+        ('L2 Lambda (Ridge)', reg.l2_lambda),
+        ('Weight Decay', reg.weight_decay),
+        ('Gradient Clip Norm', reg.gradient_clip_norm),
+        ('Early Stopping Patience', reg.early_stopping_patience),
+    ]:
+        ws_hyper[f'A{row}'] = label
+        ws_hyper[f'B{row}'] = value
+        row += 1
+    
+    row += 1
+    
+    # Loss Function
+    ws_hyper[f'A{row}'] = "LOSS FUNCTION"
+    ws_hyper[f'A{row}'].font = Font(bold=True)
+    row += 1
+    loss = metadata.loss_config
+    for label, value in [
+        ('Loss Type', loss.loss_type),
+        ('BCE Weight (Alpha)', loss.bce_weight),
+        ('AUC Weight (1-Alpha)', loss.auc_weight),
+        ('AUC Surrogate Type', loss.auc_surrogate_type),
+        ('Soft AUC Gamma', loss.soft_auc_gamma),
+        ('Use Class Weights', 'Yes' if loss.use_class_weights else 'No'),
+        ('Class Weight Ratio', loss.class_weight_ratio),
+    ]:
+        ws_hyper[f'A{row}'] = label
+        ws_hyper[f'B{row}'] = value
+        row += 1
+    
+    row += 1
+    
+    # Optimizer
+    ws_hyper[f'A{row}'] = "OPTIMIZER"
+    ws_hyper[f'A{row}'].font = Font(bold=True)
+    row += 1
+    opt = metadata.optimizer_config
+    for label, value in [
+        ('Optimizer Type', opt.optimizer_type),
+        ('Learning Rate', opt.learning_rate),
+        ('Beta1', opt.beta1),
+        ('Beta2', opt.beta2),
+        ('Epsilon', opt.epsilon),
+        ('AMSGrad', 'Yes' if opt.amsgrad else 'No'),
+        ('LR Scheduler', opt.lr_scheduler),
+        ('LR Scheduler Patience', opt.lr_scheduler_patience),
+        ('LR Scheduler Factor', opt.lr_scheduler_factor),
+        ('LR Scheduler Min LR', opt.lr_scheduler_min_lr),
+    ]:
+        ws_hyper[f'A{row}'] = label
+        ws_hyper[f'B{row}'] = value
+        row += 1
+    
+    row += 1
+    
+    # Training
+    ws_hyper[f'A{row}'] = "TRAINING"
+    ws_hyper[f'A{row}'].font = Font(bold=True)
+    row += 1
+    train = metadata.training_config
+    for label, value in [
+        ('Batch Size', train.batch_size),
+        ('Max Epochs', train.max_epochs),
+        ('Actual Epochs Trained', train.actual_epochs_trained),
+        ('Early Stopping Triggered', 'Yes' if train.early_stopping_triggered else 'No'),
+        ('Early Stopping Epoch', train.early_stopping_epoch or 'N/A'),
+        ('Random State', train.random_state),
+        ('Device', train.device),
+    ]:
+        ws_hyper[f'A{row}'] = label
+        ws_hyper[f'B{row}'] = value
+        row += 1
+    
+    # === Sheet 4: Training History ===
+    ws_hist = wb.create_sheet("Training History")
+    ws_hist['A1'] = "Epoch-by-Epoch Training Metrics"
+    ws_hist['A1'].font = Font(bold=True)
+    
+    headers = ['Epoch', 'Train Loss', 'Test Loss', 'Train AUC', 'Test AUC', 
+               'Train AR', 'Test AR', 'Train KS', 'Test KS', 'Learning Rate']
+    for col, header in enumerate(headers, start=1):
+        ws_hist.cell(row=3, column=col, value=header)
+        ws_hist.cell(row=3, column=col).font = Font(bold=True)
+    
+    history = metadata.training_history
+    for i, epoch in enumerate(history.epochs):
+        row = i + 4
+        ws_hist.cell(row=row, column=1, value=epoch)
+        ws_hist.cell(row=row, column=2, value=round(history.train_loss[i], 6))
+        ws_hist.cell(row=row, column=3, value=round(history.test_loss[i], 6))
+        ws_hist.cell(row=row, column=4, value=round(history.train_auc[i], 4))
+        ws_hist.cell(row=row, column=5, value=round(history.test_auc[i], 4))
+        ws_hist.cell(row=row, column=6, value=round(history.train_ar[i], 4))
+        ws_hist.cell(row=row, column=7, value=round(history.test_ar[i], 4))
+        ws_hist.cell(row=row, column=8, value=round(history.train_ks[i], 4))
+        ws_hist.cell(row=row, column=9, value=round(history.test_ks[i], 4))
+        ws_hist.cell(row=row, column=10, value=history.learning_rates[i])
+    
+    # === Sheet 5: Final Metrics ===
+    ws_metrics = wb.create_sheet("Final Metrics")
+    ws_metrics['A1'] = "Final Model Performance (Test Set)"
+    ws_metrics['A1'].font = Font(bold=True)
+    
+    metrics = metadata.final_metrics
+    metrics_rows = [
+        ('', ''),
+        ('DISCRIMINATION METRICS', ''),
+        ('AUC-ROC', f"{metrics.auc_roc:.4f}"),
+        ('Gini / AR', f"{metrics.gini_ar:.4f}"),
+        ('KS Statistic', f"{metrics.ks_statistic:.4f}"),
+        ('KS Decile', metrics.ks_decile),
+        ('', ''),
+        ('CALIBRATION METRICS', ''),
+        ('Log Loss', f"{metrics.log_loss:.4f}"),
+        ('Brier Score', f"{metrics.brier_score:.4f}"),
+        ('', ''),
+        ('CLASSIFICATION METRICS (@ 0.5)', ''),
+        ('Accuracy', f"{metrics.accuracy:.4f}"),
+        ('Precision', f"{metrics.precision:.4f}"),
+        ('Recall', f"{metrics.recall:.4f}"),
+        ('F1 Score', f"{metrics.f1_score:.4f}"),
+        ('', ''),
+        ('CONFUSION MATRIX', ''),
+        ('True Positives', metrics.true_positives),
+        ('True Negatives', metrics.true_negatives),
+        ('False Positives', metrics.false_positives),
+        ('False Negatives', metrics.false_negatives),
+        ('', ''),
+        ('CAPTURE RATES', ''),
+        ('Bad Capture (Top 10%)', f"{metrics.bad_capture_rate_top_10pct:.2%}"),
+        ('Bad Capture (Top 20%)', f"{metrics.bad_capture_rate_top_20pct:.2%}"),
+        ('Lift (Top Decile)', f"{metrics.lift_top_decile:.2f}x"),
+    ]
+    for i, (label, value) in enumerate(metrics_rows, start=3):
+        if label and not label.endswith('METRICS') and label != 'CONFUSION MATRIX' and label != 'CAPTURE RATES':
+            ws_metrics[f'A{i}'] = label
+            ws_metrics[f'B{i}'] = value
+        else:
+            ws_metrics[f'A{i}'] = label
+            ws_metrics[f'A{i}'].font = Font(bold=True)
+    
+    # === Sheet 6: Scorecard ===
+    ws_score = wb.create_sheet("Scorecard")
+    ws_score['A1'] = f"Credit Scorecard - {metadata.segment}"
+    ws_score['A1'].font = Font(size=14, bold=True, color="1E3A5F")
+    ws_score['A2'] = f"Score Range: {metadata.scorecard_config.score_min} - {metadata.scorecard_config.score_max} (Higher = Lower Risk)"
+    
+    ws_score['A4'] = "Base Points"
+    ws_score['A4'].font = Font(bold=True)
+    ws_score['B4'] = metadata.scorecard.base_points
+    ws_score['B4'].font = Font(bold=True, size=14)
+    
+    row = 6
+    for feature in metadata.scorecard.features:
+        ws_score[f'A{row}'] = feature.feature_name
+        ws_score[f'A{row}'].font = Font(bold=True)
+        ws_score[f'B{row}'] = f"Weight: {feature.model_weight:.4f}"
+        row += 1
+        
+        # Headers
+        for col, header in enumerate(['Bin', 'WoE', 'Train N', 'Test N', 'Points'], start=1):
+            ws_score.cell(row=row, column=col, value=header)
+            ws_score.cell(row=row, column=col).font = Font(bold=True)
+        row += 1
+        
+        # Bin rows
+        for bin_info in feature.bins:
+            ws_score.cell(row=row, column=1, value=bin_info.bin_label)
+            ws_score.cell(row=row, column=2, value=round(bin_info.woe_value, 3))
+            ws_score.cell(row=row, column=3, value=bin_info.count_train)
+            ws_score.cell(row=row, column=4, value=bin_info.count_test)
+            ws_score.cell(row=row, column=5, value=bin_info.points)
+            
+            # Color code points
+            if bin_info.points > 0:
+                ws_score.cell(row=row, column=5).font = Font(color="48BB78")  # Green
+            elif bin_info.points < 0:
+                ws_score.cell(row=row, column=5).font = Font(color="F56565")  # Red
+            row += 1
+        
+        row += 1  # Space between features
+    
+    # Save
+    wb.save(output_path)
+```
+
+---
+
+## RIFT UI Components
+
+### App Layout with RIFT Branding
+
+```tsx
+// frontend/src/App.tsx
+
+import { RIFTLogo } from './components/common/RIFTLogo';
+
+const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-rift-primary shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <RIFTLogo size="md" variant="full" className="text-white" />
+          
+          <nav className="flex items-center gap-6">
+            <NavLink to="/">Dashboard</NavLink>
+            <NavLink to="/upload">New Scorecard</NavLink>
+            <NavLink to="/models">Models</NavLink>
+          </nav>
+          
+          <div className="flex items-center gap-3">
+            <span className="text-rift-secondary-light text-sm">NN Scorecard Module</span>
+          </div>
+        </div>
+      </header>
+      
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {children}
+      </main>
+      
+      {/* Footer */}
+      <footer className="bg-rift-primary-dark text-gray-400 py-4 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 flex justify-between items-center">
+          <span className="text-sm">
+            RIFT v4.0 • Risk Intelligence & Finance Technology
+          </span>
+          <span className="text-sm">
+            Globe Telecom • Credit Risk Management
+          </span>
+        </div>
+      </footer>
+    </div>
+  );
+};
+```
+
+### Scorecard Display with RIFT Styling
+
+```tsx
+// frontend/src/components/results/ScorecardDisplay.tsx
+
+interface ScorecardDisplayProps {
+  scorecard: Scorecard;
+  segment: string;
+}
+
+export const ScorecardDisplay: React.FC<ScorecardDisplayProps> = ({
+  scorecard,
+  segment
+}) => {
+  const getScoreColor = (score: number): string => {
+    if (score >= 80) return 'text-score-excellent';
+    if (score >= 60) return 'text-score-good';
+    if (score >= 40) return 'text-score-fair';
+    if (score >= 20) return 'text-score-poor';
+    return 'text-score-very-poor';
+  };
+
+  const getPointsColor = (points: number): string => {
+    if (points > 0) return 'text-rift-success bg-green-50';
+    if (points < 0) return 'text-rift-error bg-red-50';
+    return 'text-gray-600 bg-gray-50';
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+      {/* Header */}
+      <div className="bg-rift-primary px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white">Credit Scorecard</h2>
+            <p className="text-rift-secondary-light text-sm">Segment: {segment}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-white text-sm">Score Range</div>
+            <div className="text-rift-secondary font-mono text-lg">
+              {scorecard.score_range[0]} - {scorecard.score_range[1]}
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Base Points */}
+      <div className="bg-rift-gray-100 px-6 py-4 border-b">
+        <div className="flex items-center justify-between">
+          <span className="text-rift-gray-600 font-medium">Base Points</span>
+          <span className="text-3xl font-bold text-rift-primary">
+            {scorecard.base_points}
+          </span>
+        </div>
+      </div>
+      
+      {/* Feature Scorecards */}
+      <div className="divide-y">
+        {scorecard.features.map((feature) => (
+          <div key={feature.feature} className="px-6 py-4">
+            {/* Feature Header */}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-rift-gray-800">
+                {feature.feature.replace('woe_', '').replace(/_/g, ' ').toUpperCase()}
+              </h3>
+              <span className="text-xs text-rift-gray-600 font-mono">
+                Weight: {feature.weight.toFixed(4)}
+              </span>
+            </div>
+            
+            {/* Bins Table */}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-rift-gray-600">
+                  <th className="py-1">Bin</th>
+                  <th className="py-1 text-right">WoE</th>
+                  <th className="py-1 text-right">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {feature.bins.map((bin, idx) => (
+                  <tr key={idx} className="border-t border-gray-100">
+                    <td className="py-2">{bin.bin_label}</td>
+                    <td className="py-2 text-right font-mono">{bin.woe_value.toFixed(3)}</td>
+                    <td className="py-2 text-right">
+                      <span className={`inline-block px-2 py-0.5 rounded font-semibold ${getPointsColor(bin.points)}`}>
+                        {bin.points > 0 ? '+' : ''}{bin.points}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+      
+      {/* Score Range Footer */}
+      <div className="bg-rift-gray-100 px-6 py-4">
+        <div className="flex items-center justify-between text-sm">
+          <div>
+            <span className="text-rift-gray-600">Min Possible: </span>
+            <span className={`font-semibold ${getScoreColor(scorecard.min_possible_score)}`}>
+              {scorecard.min_possible_score}
+            </span>
+          </div>
+          <div className="text-center text-rift-gray-600">
+            Total Score = Base + Σ(Feature Points)
+          </div>
+          <div>
+            <span className="text-rift-gray-600">Max Possible: </span>
+            <span className={`font-semibold ${getScoreColor(scorecard.max_possible_score)}`}>
+              {scorecard.max_possible_score}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+```
+
+---
+
+## Summary
+
+### Key Features
+1. **RIFT Branding**: Logo, colors, typography throughout
+2. **Complete Hyperparameters**: Every single parameter saved and exported
+3. **Train/Test Only**: No validation split
+4. **Configurable Neurons**: Full control over layers and neurons per layer
+5. **Excel Export**: Comprehensive report with all sheets
+6. **JSON Metadata**: Machine-readable complete configuration
+
+### Files Produced
+- Model checkpoint (.pt) with full metadata
+- JSON metadata file for API access
+- Excel report with 6 sheets for documentation
